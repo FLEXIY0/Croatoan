@@ -2,6 +2,7 @@
 systemd-zram-generator
 earlyoom
 fastfetch
+systemd-timesyncd
 scrot
 libnotify-bin
 libxml2-utils

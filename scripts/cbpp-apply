@@ -182,6 +182,9 @@ set_key config/binary LB_BOOTAPPEND_INSTALL "$CBPP_BOOTAPPEND_INSTALL"
 set_key config/binary LB_MEMTEST "$CBPP_MEMTEST"
 set_key config/binary LB_ZSYNC "$CBPP_ZSYNC"
 set_key config/binary LB_DEBIAN_INSTALLER_DISTRIBUTION "$CBPP_DISTRIBUTION"
+set_key config/binary LB_ISO_APPLICATION "$CBPP_ISO_APPLICATION"
+set_key config/binary LB_ISO_PUBLISHER "$CBPP_ISO_PUBLISHER"
+set_key config/binary LB_HDD_LABEL "$CBPP_HDD_LABEL"
 
 # ------------------------------------------------------------- config/build --
 
@@ -375,6 +378,27 @@ pref("toolkit.telemetry.enabled", false);
 EOF
 else
 	remove_file "$FF_PREFS"
+fi
+
+# ------------------------------------------------------------- networking --
+
+IPV6_CONF=config/includes.chroot_after_packages/etc/NetworkManager/conf.d/99-cbpp-ipv6-privacy.conf
+
+if [ "$CBPP_IPV6_PRIVACY" = "true" ]; then
+	# NetworkManager merges every [connection-*] block in conf.d; the suffix is
+	# only there so several files can each contribute defaults.
+	write_file "$IPV6_CONF" 644 <<EOF
+# $GEN
+#
+# Prefer RFC 4941 temporary addresses, so the IPv6 interface identifier stops
+# being a stable fingerprint of this machine's hardware on every network it
+# joins. NetworkManager leaves this unset by default.
+
+[connection-cbpp-ipv6-privacy]
+ipv6.ip6-privacy=2
+EOF
+else
+	remove_file "$IPV6_CONF"
 fi
 
 # -------------------------------------------------------------- screenshot --
@@ -665,6 +689,10 @@ add_pkg() { GEN_PKGS="${GEN_PKGS}${GEN_PKGS:+
 [ "$CBPP_ZRAM" = "true" ] && add_pkg systemd-zram-generator
 [ "$CBPP_EARLYOOM" = "true" ] && add_pkg earlyoom
 [ "$CBPP_FASTFETCH" = "true" ] && add_pkg fastfetch
+
+# cbpp-metapackage recommends "ntp", which trixie no longer has, so the image
+# ends up with no clock synchronisation at all.
+[ "$CBPP_TIMESYNC" = "true" ] && add_pkg systemd-timesyncd
 
 # scrot and notify-send already arrive through cbpp-metapackage's Recommends,
 # but naming them here means the screenshot entry cannot quietly stop working
