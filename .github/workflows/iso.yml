@@ -1,0 +1,110 @@
+name: ISO
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Draft build: squashfs level 3 instead of 19, much faster, larger image"
+        type: boolean
+        default: false
+
+concurrency:
+  group: iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs in seconds and catches the mistakes that would otherwise surface half
+  # an hour into a build, so it is worth having as its own job.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make ci
+
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # A hosted runner starts with roughly 14 GB free on /, and a full build
+      # needs more than that once the chroot, the squashfs and the ISO all
+      # exist at once. These are the largest things no Debian build will use.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/.ghcup \
+                      "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune -af
+          df -h /
+
+      # The package cache is what makes a rebuild quick: without it every run
+      # re-downloads about 1.5 GB of .debs and the debootstrap tarball. The
+      # rolling key means each run restores the most recent cache and saves a
+      # fresh one, rather than invalidating on every config change.
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: cbpp-cache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            cbpp-cache-${{ runner.os }}-
+
+      - name: Draft build settings
+        if: ${{ inputs.draft }}
+        run: |
+          sed -i 's/^CBPP_SQUASHFS_LEVEL=.*/CBPP_SQUASHFS_LEVEL="3"/' cbpp.conf
+          sed -i 's/^CBPP_ZSYNC=.*/CBPP_ZSYNC="false"/' cbpp.conf
+
+      - name: Build the builder image
+        run: make image
+
+      - name: Build the ISO
+        run: make build
+
+      - name: Checksums
+        id: iso
+        run: |
+          ISO=$(ls live-image-*.hybrid.iso)
+          sha256sum "$ISO" | tee "$ISO.sha256"
+          ls -lh "$ISO"
+          echo "name=$ISO" >> "$GITHUB_OUTPUT"
+
+      # Saved even when a later step fails, so a broken run still leaves the
+      # cache warm for the next one.
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: cbpp-cache-${{ runner.os }}-${{ github.sha }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cbpp-iso
+          path: |
+            live-image-*.hybrid.iso
+            live-image-*.hybrid.iso.sha256
+            live-image-*.packages
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      # live-build writes its reasoning to build.log; without it a failure is
+      # very hard to diagnose after the runner is gone.
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            .build/
+            chroot.packages.*
+          if-no-files-found: ignore
+          retention-days: 7

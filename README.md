@@ -40,6 +40,14 @@ After the first build, re-spin only the parts you actually changed:
 `make apt-cache` starts a caching apt proxy, which takes most of the download
 cost out of repeated chroot rebuilds. `make help` lists every target.
 
+### CI
+
+`.github/workflows/iso.yml` builds the ISO on every push and uploads it as an
+artifact, with a fast `lint` job gating the slow one. The package cache is
+carried between runs with a rolling key, so a rebuild does not re-download the
+~1.5 GB of packages a fresh chroot needs. Run it by hand from the Actions tab
+with **draft** ticked to trade image size for a much quicker build.
+
 See [docs/fast-iteration.ru.md](docs/fast-iteration.ru.md) for the details.
 
 If you would rather not use docker, run live-build directly as root. Note the
