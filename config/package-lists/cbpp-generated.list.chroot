@@ -2,3 +2,6 @@
 systemd-zram-generator
 earlyoom
 fastfetch
+scrot
+libnotify-bin
+libxml2-utils
