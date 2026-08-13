@@ -30,6 +30,16 @@ printf '  %-26s %s\n' \
 	"zsync file"         "$CBPP_ZSYNC"
 
 echo
+if [ "$CBPP_ZRAM" = "true" ]; then
+	printf '  %-26s %s\n' \
+		"zram"           "${CBPP_ZRAM_SIZE}, ${CBPP_ZRAM_ALGORITHM}, priority ${CBPP_ZRAM_PRIORITY}" \
+		"vm tuning"      "swappiness=${CBPP_VM_SWAPPINESS} page-cluster=${CBPP_VM_PAGE_CLUSTER} watermark_scale=${CBPP_VM_WATERMARK_SCALE_FACTOR}" \
+		"earlyoom"       "$CBPP_EARLYOOM"
+else
+	printf '  %-26s %s\n' "zram" "disabled"
+fi
+
+echo
 echo "  live cmdline    $(lbval LB_BOOTAPPEND_LIVE config/binary)"
 echo "  failsafe        $(lbval LB_BOOTAPPEND_LIVE_FAILSAFE config/binary)"
 

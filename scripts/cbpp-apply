@@ -256,6 +256,87 @@ exit 0
 EOF
 fi
 
+# -------------------------------------------------------------------- zram --
+
+ZRAM_CONF=config/includes.chroot_after_packages/etc/systemd/zram-generator.conf
+ZRAM_SYSCTL=config/includes.chroot_after_packages/etc/sysctl.d/99-cbpp-zram.conf
+EARLYOOM_CONF=config/includes.chroot_after_packages/etc/default/earlyoom
+ZRAM_PKGS=config/package-lists/cbpp-zram.list.chroot
+
+# These land under includes.chroot_after_packages, which is copied in after the
+# package install, so they win over the conffiles the packages ship.
+if [ "$CBPP_ZRAM" = "true" ]; then
+	write_file "$ZRAM_CONF" 644 <<EOF
+# $GEN
+#
+# zram-generator turns this into systemd-zram-setup@zram0.service at boot.
+
+[zram0]
+zram-size = ${CBPP_ZRAM_SIZE}
+compression-algorithm = ${CBPP_ZRAM_ALGORITHM}
+swap-priority = ${CBPP_ZRAM_PRIORITY}
+
+# Let the kernel release backing store as pages are freed.
+options = discard
+EOF
+
+	write_file "$ZRAM_SYSCTL" 644 <<EOF
+# $GEN
+#
+# Kernel vm defaults assume swap is a slow disk. With swap in compressed RAM
+# the trade-offs invert: swapping is cheap, and readahead is pure waste.
+
+# Bias strongly towards swapping anonymous pages out (ceiling is 200).
+vm.swappiness = ${CBPP_VM_SWAPPINESS}
+
+# Disable swap readahead: 2^0 = 1 page, i.e. only what was asked for.
+vm.page-cluster = ${CBPP_VM_PAGE_CLUSTER}
+
+# Do not inflate watermarks after fragmentation events.
+vm.watermark_boost_factor = ${CBPP_VM_WATERMARK_BOOST_FACTOR}
+
+# Begin reclaim earlier so compression keeps up under pressure.
+vm.watermark_scale_factor = ${CBPP_VM_WATERMARK_SCALE_FACTOR}
+EOF
+else
+	remove_file "$ZRAM_CONF"
+	remove_file "$ZRAM_SYSCTL"
+fi
+
+if [ "$CBPP_EARLYOOM" = "true" ]; then
+	write_file "$EARLYOOM_CONF" 644 <<EOF
+# $GEN
+#
+# Act at 5% free memory and 5% free swap rather than earlyoom's default 10%,
+# because with zram "free swap" shrinks slowly and 10% fires too eagerly.
+# -r 0 silences the periodic memory report, which otherwise fills the journal
+# of a live session.
+#
+# --avoid keeps the session itself alive so the machine stays usable after a
+# kill; --prefer names the processes that realistically cause the pressure.
+EARLYOOM_ARGS="-r 0 -m 5 -s 5 --avoid '^(systemd|Xorg|openbox|lxdm|tint2|conky)\$' --prefer '^(firefox-esr|gimp|vlc|libreoffice)'"
+EOF
+else
+	remove_file "$EARLYOOM_CONF"
+fi
+
+# live-build reads every config/package-lists/*.list.chroot, so the packages
+# these settings need can live in their own generated list instead of being
+# hand-merged into live.list.chroot.
+ZRAM_PKG_LIST=""
+[ "$CBPP_ZRAM" = "true" ] && ZRAM_PKG_LIST="systemd-zram-generator"
+[ "$CBPP_EARLYOOM" = "true" ] && ZRAM_PKG_LIST="${ZRAM_PKG_LIST}${ZRAM_PKG_LIST:+
+}earlyoom"
+
+if [ -n "$ZRAM_PKG_LIST" ]; then
+	write_file "$ZRAM_PKGS" 644 <<EOF
+# $GEN
+$ZRAM_PKG_LIST
+EOF
+else
+	remove_file "$ZRAM_PKGS"
+fi
+
 # ------------------------------------------------ apt sources in the image --
 
 write_file config/includes.chroot_after_packages/usr/lib/cbpp/apt-setup 755 <<EOF

@@ -101,6 +101,58 @@ gzip | bzip2 | lzma) ok "initramfs compression '$CBPP_INITRAMFS_COMPRESSION'" ;;
 *) fail "live-build only accepts gzip, bzip2 or lzma for initramfs compression, not '$CBPP_INITRAMFS_COMPRESSION'" ;;
 esac
 
+# -- zram -------------------------------------------------------------------
+
+if [ "$CBPP_ZRAM" = "true" ]; then
+	# The kernel rejects an unknown compressor and the zram device then fails to
+	# come up, leaving the system with no swap at all.
+	case $CBPP_ZRAM_ALGORITHM in
+	lzo | lzo-rle | lz4 | lz4hc | 842 | zstd)
+		ok "zram algorithm '$CBPP_ZRAM_ALGORITHM'"
+		;;
+	*)
+		fail "unknown zram compression algorithm '$CBPP_ZRAM_ALGORITHM' (lzo, lzo-rle, lz4, lz4hc, 842, zstd)"
+		;;
+	esac
+
+	grep -qx "systemd-zram-generator" config/package-lists/cbpp-zram.list.chroot 2>/dev/null ||
+		fail "CBPP_ZRAM is on but systemd-zram-generator is not in the package list"
+
+	grep -q "^zram-size = ${CBPP_ZRAM_SIZE}\$" \
+		config/includes.chroot_after_packages/etc/systemd/zram-generator.conf 2>/dev/null ||
+		fail "zram-generator.conf does not carry CBPP_ZRAM_SIZE"
+
+	ok "zram enabled: ${CBPP_ZRAM_SIZE}, priority ${CBPP_ZRAM_PRIORITY}"
+else
+	ok "zram disabled"
+fi
+
+# swappiness above 100 only means anything on kernels since 5.8, and the
+# kernel clamps anything above 200.
+case $CBPP_VM_SWAPPINESS in
+'' | *[!0-9]*) fail "CBPP_VM_SWAPPINESS must be an integer, got '$CBPP_VM_SWAPPINESS'" ;;
+*)
+	if [ "$CBPP_VM_SWAPPINESS" -le 200 ]; then
+		ok "vm.swappiness=$CBPP_VM_SWAPPINESS"
+	else
+		fail "CBPP_VM_SWAPPINESS is $CBPP_VM_SWAPPINESS; the kernel ceiling is 200"
+	fi
+	;;
+esac
+
+case $CBPP_VM_PAGE_CLUSTER in
+'' | *[!0-9]*) fail "CBPP_VM_PAGE_CLUSTER must be an integer, got '$CBPP_VM_PAGE_CLUSTER'" ;;
+*) ok "vm.page-cluster=$CBPP_VM_PAGE_CLUSTER" ;;
+esac
+
+if [ "$CBPP_EARLYOOM" = "true" ]; then
+	grep -qx "earlyoom" config/package-lists/cbpp-zram.list.chroot 2>/dev/null ||
+		fail "CBPP_EARLYOOM is on but earlyoom is not in the package list"
+	ok "earlyoom enabled"
+elif [ "$CBPP_ZRAM" = "true" ]; then
+	warn "zram is on without earlyoom; with no disk swap behind it a full zram device can thrash before the kernel OOM killer reacts"
+fi
+
 # -- suite consistency ------------------------------------------------------
 
 for _f in config/archives/cbpp.list.binary config/archives/cbpp.list.chroot; do
