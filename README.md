@@ -15,16 +15,39 @@ In this repository, you'll find the sources used to generate the actual system i
 
 ### Building
 
-While you can certainly build the iso natively, it's easiest and very tidy to use docker, as below.
+Everything the image is configured with lives in `cbpp.conf` at the root of the
+repository. Edit a value there, then let the Makefile stamp it through the
+live-build tree under `config/`:
 
 ```
-$ docker run --privileged --cap-add=ALL -v /proc:/proc -v /sys:/sys -v $PWD:/build -w /build -it --rm debian:trixie /bin/sh -c 'apt-get update && apt-get install -y live-build && mkdir -p .build && touch .build/config && lb build'
+$ $EDITOR cbpp.conf
+$ make apply show      # stamp it in, and print exactly what changed
+$ make build           # full ISO build, in docker
 ```
 
-If you don't want to run docker, you can run the same commands that get passed to the shell (as root, or with sudo):
+`make apply`, `make show`, `make diff` and `make lint` are plain shell, need no
+docker, and run in well under a second. `make lint` catches the things
+live-build itself will not tell you about until half an hour into a build.
+
+After the first build, re-spin only the parts you actually changed:
+
+| Target | Rebuilds | Use it after changing |
+| --- | --- | --- |
+| `make rebuild` | the ISO, reusing the chroot | bootloader, splash, kernel cmdline, ISO label, squashfs compression |
+| `make rechroot` | the chroot, reusing the bootstrap | package lists, hooks, chroot includes, kernel |
+| `make build` | everything | suite, architecture, mirrors |
+
+`make apt-cache` starts a caching apt proxy, which takes most of the download
+cost out of repeated chroot rebuilds. `make help` lists every target.
+
+See [docs/fast-iteration.ru.md](docs/fast-iteration.ru.md) for the details.
+
+If you would rather not use docker, run live-build directly as root. Note the
+`touch .build/config`: it stops live-build from regenerating `config/` and
+discarding everything this repository tracks.
 
 ```
-# apt-get update && apt-get install -y live-build && mkdir .build && touch .build/config && lb build
+# apt-get update && apt-get install -y live-build && mkdir -p .build && touch .build/config && lb build
 ```
 
 ### Packages

@@ -1,3 +1,24 @@
+# Build artefacts, for a build run at the repo root (`lb build` / `make build`).
+# The /*/ patterns below cover the per-release branches, which keep the
+# live-build tree one directory down.
+/.build/
+/cache/
+/chroot/
+/chroot.files
+/chroot.packages.install
+/chroot.packages.live
+/binary/
+/binary.modified_timestamps
+/live-image-*.contents
+/live-image-*.files
+/live-image-*.hybrid.iso
+/live-image-*.hybrid.iso.zsync
+/live-image-*.packages
+/live-image-*.tar
+/live-image-*.iso
+/*.log
+
+# Same set, one level down.
 /*/cache
 /*/.build/
 /*/binary.modified_timestamps
@@ -12,3 +33,6 @@
 /*/live-image-*.hybrid.iso.zsync
 /*/live-image-*.packages
 
+# scripts/cbpp-apply writes these while swapping a file into place; they should
+# never survive a run, but do not let a crashed run dirty the tree.
+*.cbpp-tmp

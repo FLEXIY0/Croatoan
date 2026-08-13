@@ -25,7 +25,7 @@ LB_APT_SOURCE_ARCHIVES="false"
 LB_CACHE="true"
 
 # Control if downloaded package indices should be cached
-LB_CACHE_INDICES="false"
+LB_CACHE_INDICES="true"
 
 # Control if downloaded packages files should be cached
 LB_CACHE_PACKAGES="true"

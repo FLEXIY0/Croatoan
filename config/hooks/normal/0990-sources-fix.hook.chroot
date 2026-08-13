@@ -1,7 +1,0 @@
-#!/bin/sh
-set -ex
-
-apt update
-apt install -y -t=trixie-backports linux-image-amd64
-
-

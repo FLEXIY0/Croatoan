@@ -1,0 +1,61 @@
+#!/bin/sh
+# cbpp-show - what the image will actually be built with, and what changed.
+#
+# `make show` after editing cbpp.conf answers both questions in under a second,
+# without touching docker or starting a build.
+
+set -eu
+
+ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT"
+
+# shellcheck disable=SC1091
+. ./cbpp.conf
+
+lbval() { sed -n "s/^$1=\"\(.*\)\"$/\1/p" "$2"; }
+
+echo "=== effective image settings ============================================"
+printf '  %-26s %s\n' \
+	"release"            "cbpp ${CBPP_VERSION} (${CBPP_DISTRIBUTION}/${CBPP_ARCH})" \
+	"iso volume"         "$(lbval LB_ISO_VOLUME config/binary)" \
+	"kernel"             "${CBPP_KERNEL}-${CBPP_ARCH}" \
+	"kernel backports"   "$CBPP_KERNEL_BACKPORTS" \
+	"squashfs"           "${CBPP_SQUASHFS_COMPRESSION:-<default>} level ${CBPP_SQUASHFS_LEVEL:-<default>}" \
+	"initramfs"          "$CBPP_INITRAMFS_COMPRESSION" \
+	"debian mirror"      "$CBPP_MIRROR" \
+	"cbpp archive"       "${CBPP_PACKAGES_URL}/${CBPP_DISTRIBUTION}" \
+	"apt proxy"          "${CBPP_APT_PROXY:-<none>}" \
+	"apt index cache"    "$CBPP_CACHE_INDICES" \
+	"memtest entry"      "$CBPP_MEMTEST" \
+	"zsync file"         "$CBPP_ZSYNC"
+
+echo
+echo "  live cmdline    $(lbval LB_BOOTAPPEND_LIVE config/binary)"
+echo "  failsafe        $(lbval LB_BOOTAPPEND_LIVE_FAILSAFE config/binary)"
+
+echo
+echo "=== packages ============================================================"
+sed 's/^/  /' config/package-lists/live.list.chroot | grep -v '^  *$' || true
+
+echo
+echo "=== sync ================================================================"
+if scripts/cbpp-apply --check --quiet >/dev/null 2>&1; then
+	echo "  config/ matches cbpp.conf"
+else
+	echo "  config/ is STALE - run 'make apply'"
+	scripts/cbpp-apply --check 2>/dev/null || true
+fi
+
+echo
+echo "=== uncommitted changes ================================================="
+if git -C "$ROOT" diff --quiet HEAD -- cbpp.conf config 2>/dev/null &&
+	[ -z "$(git -C "$ROOT" ls-files --others --exclude-standard cbpp.conf config)" ]; then
+	echo "  none"
+else
+	git -C "$ROOT" --no-pager diff --stat HEAD -- cbpp.conf config | sed 's/^/  /'
+	for _f in $(git -C "$ROOT" ls-files --others --exclude-standard cbpp.conf config); do
+		printf '  %s (new)\n' "$_f"
+	done
+	echo
+	git -C "$ROOT" --no-pager diff HEAD -- cbpp.conf config | sed 's/^/  /'
+fi

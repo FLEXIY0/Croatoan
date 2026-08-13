@@ -1,0 +1,147 @@
+#!/bin/sh
+# cbpp-lint - static checks on the live-build tree, run before a build.
+#
+# Everything here is a mistake that otherwise only shows up 30 minutes into a
+# build, or worse, in a silently broken ISO.
+
+set -eu
+
+ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT"
+
+FAIL=0
+
+fail() { echo "FAIL  $*" >&2; FAIL=$((FAIL + 1)); }
+warn() { echo "warn  $*" >&2; }
+ok() { echo "ok    $*"; }
+
+# shellcheck disable=SC1091
+. ./cbpp.conf
+
+# -- config/ must match cbpp.conf -------------------------------------------
+
+if scripts/cbpp-apply --check --quiet >/dev/null 2>&1; then
+	ok "config/ is in sync with cbpp.conf"
+else
+	fail "config/ has drifted from cbpp.conf - run 'make apply'"
+fi
+
+# -- the both-directories-non-empty hook gate -------------------------------
+#
+# live-build's chroot_hooks only enters its loop when config/hooks/normal has a
+# *.chroot AND config/hooks/live has a *.chroot or *.container.  Empty either
+# one and every hook is skipped without a word of warning.
+
+_normal=$(find config/hooks/normal -maxdepth 1 -name '*.chroot' 2>/dev/null | wc -l)
+_live=$(find config/hooks/live -maxdepth 1 \( -name '*.chroot' -o -name '*.container' \) 2>/dev/null | wc -l)
+
+if [ "$_normal" -gt 0 ] && [ "$_live" -gt 0 ]; then
+	ok "hook directories non-empty (normal=$_normal live=$_live)"
+else
+	fail "config/hooks/normal ($_normal) and config/hooks/live ($_live) must BOTH be non-empty, or live-build runs no hooks at all"
+fi
+
+# -- hooks are executable and parse -----------------------------------------
+
+for _hook in $(find config/hooks -name '*.hook.*' -type f 2>/dev/null | sort); do
+	[ -x "$_hook" ] || fail "$_hook is not executable"
+	case $(head -n1 "$_hook") in
+	*bash*) bash -n "$_hook" 2>/dev/null || fail "$_hook: bash syntax error" ;;
+	*sh*) sh -n "$_hook" 2>/dev/null || fail "$_hook: sh syntax error" ;;
+	*) warn "$_hook: no recognised shebang" ;;
+	esac
+done
+ok "hooks are executable and parse"
+
+# -- kernel package name ----------------------------------------------------
+#
+# live-build appends "-${LB_LINUX_FLAVOURS_WITH_ARCH}" to each LB_LINUX_PACKAGES
+# entry, so a name that already carries the arch produces linux-image-amd64-amd64.
+
+case $CBPP_KERNEL in
+*-"$CBPP_ARCH")
+	fail "CBPP_KERNEL ('$CBPP_KERNEL') must not end in -$CBPP_ARCH; live-build appends the flavour itself"
+	;;
+*)
+	ok "CBPP_KERNEL resolves to ${CBPP_KERNEL}-${CBPP_ARCH}"
+	;;
+esac
+
+if [ "$CBPP_KERNEL_BACKPORTS" = "true" ] && [ "$(grep '^LB_BACKPORTS=' config/chroot)" != 'LB_BACKPORTS="true"' ]; then
+	fail "CBPP_KERNEL_BACKPORTS is on but LB_BACKPORTS is not true - the backports suite will not be available to the hook"
+fi
+
+# -- ISO volume label -------------------------------------------------------
+#
+# ISO9660 caps the volume id at 32 characters.  live-build expands
+# @ISOVOLUME_TS@ into YYYYmmdd-HH:MM (14 chars) at build time, so check the
+# expanded length, not the literal.
+
+_vol=$(sed -n 's/^LB_ISO_VOLUME="\(.*\)"$/\1/p' config/binary)
+_vol_expanded=$(printf '%s' "$_vol" | sed 's/@ISOVOLUME_TS@/20260101-00:00/')
+_len=${#_vol_expanded}
+if [ "$_len" -le 32 ]; then
+	ok "ISO volume '$_vol' expands to $_len chars (limit 32)"
+else
+	fail "ISO volume expands to $_len chars, over the 32-char ISO9660 limit: '$_vol_expanded'"
+fi
+
+# -- compression choices ----------------------------------------------------
+
+case $CBPP_SQUASHFS_COMPRESSION in
+gzip | lzo | lz4 | xz | zstd) ok "squashfs compression '$CBPP_SQUASHFS_COMPRESSION'" ;;
+"") warn "CBPP_SQUASHFS_COMPRESSION is empty; live-build defaults to xz" ;;
+*) fail "unknown squashfs compression '$CBPP_SQUASHFS_COMPRESSION'" ;;
+esac
+
+# live-build validates this one itself and aborts on anything else; it only
+# implements gzip (no-op), bzip2 and lzma in chroot_hacks.
+case $CBPP_INITRAMFS_COMPRESSION in
+gzip | bzip2 | lzma) ok "initramfs compression '$CBPP_INITRAMFS_COMPRESSION'" ;;
+*) fail "live-build only accepts gzip, bzip2 or lzma for initramfs compression, not '$CBPP_INITRAMFS_COMPRESSION'" ;;
+esac
+
+# -- suite consistency ------------------------------------------------------
+
+for _f in config/archives/cbpp.list.binary config/archives/cbpp.list.chroot; do
+	grep -q "$CBPP_DISTRIBUTION" "$_f" ||
+		fail "$_f does not mention '$CBPP_DISTRIBUTION'"
+done
+grep -q "^LB_DEBIAN_INSTALLER_DISTRIBUTION=\"$CBPP_DISTRIBUTION\"" config/binary ||
+	fail "config/binary: debian-installer suite does not match $CBPP_DISTRIBUTION"
+ok "suite '$CBPP_DISTRIBUTION' consistent across archives and installer"
+
+# -- package list -----------------------------------------------------------
+
+_pkglist=config/package-lists/live.list.chroot
+if [ -s "$_pkglist" ]; then
+	if grep -q "$(printf '\r')" "$_pkglist"; then
+		fail "$_pkglist contains CRLF line endings - apt reads the CR as part of the package name"
+	fi
+	ok "package list has $(grep -c '[^[:space:]]' "$_pkglist") entries"
+else
+	fail "$_pkglist is missing or empty"
+fi
+
+# -- bootloader templates ---------------------------------------------------
+#
+# live.cfg.in is a template; live-build substitutes @LINUX@/@INITRD@/@APPEND_*@.
+# Losing a placeholder yields a boot entry that points nowhere.
+
+for _tpl in config/bootloaders/*/live.cfg.in; do
+	[ -e "$_tpl" ] || continue
+	for _ph in @LINUX@ @INITRD@ @APPEND_LIVE@; do
+		grep -q -- "$_ph" "$_tpl" || fail "$_tpl: missing placeholder $_ph"
+	done
+done
+ok "bootloader templates keep their placeholders"
+
+# ---------------------------------------------------------------------------
+
+echo
+if [ "$FAIL" -eq 0 ]; then
+	echo "cbpp-lint: all checks passed"
+else
+	echo "cbpp-lint: $FAIL check(s) failed" >&2
+	exit 1
+fi
