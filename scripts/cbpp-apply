@@ -323,6 +323,60 @@ fi
 # live-build reads every config/package-lists/*.list.chroot, so the packages
 # these settings need can live in their own generated list instead of being
 # hand-merged into live.list.chroot.
+# ----------------------------------------------------------------- firefox --
+
+# /usr/lib/firefox-esr/browser/defaults is a symlink to this path, and Firefox
+# reads every *.js in it at startup, in alphabetical order. The zz- prefix puts
+# us after Debian's firefox.js and vendor.js. Adding a new file here avoids
+# touching /etc/firefox-esr/firefox-esr.js, which is a conffile carrying
+# Debian's own settings.
+FF_PREFS=config/includes.chroot_after_packages/usr/share/firefox-esr/browser/defaults/preferences/zz-cbpp-lowmem.js
+
+if [ "$CBPP_FIREFOX_LOWMEM" = "true" ]; then
+	write_file "$FF_PREFS" 644 <<EOF
+// $GEN
+//
+// Low-memory defaults for CBPP. These are defaults, not locks: anything here
+// can still be changed in about:config, and the user's value wins.
+
+// Unload background tabs under memory pressure instead of letting them get
+// swapped out. Firefox ships this off.
+pref("browser.tabs.unloadOnLowMemory", true);
+
+// Site isolation. Off is a deliberate memory-for-security trade, see cbpp.conf.
+pref("fission.autostart", ${CBPP_FIREFOX_FISSION});
+
+// Content processes, down from the default of 8.
+pref("dom.ipc.processCount", ${CBPP_FIREFOX_PROCESS_COUNT});
+
+// Do not keep a spare content process warm for the next tab. It buys tab-open
+// latency at the price of a whole idle process.
+pref("dom.ipc.processPrelaunch.enabled", false);
+
+// Do not retain rendered pages for instant back/forward. This is the bfcache;
+// switching it off costs a reload on Back and saves the memory those pages held.
+pref("browser.sessionhistory.max_total_viewers", 0);
+
+// Write session state every minute rather than every 15 seconds, and remember
+// far fewer closed tabs and windows - each one keeps its state in memory.
+pref("browser.sessionstore.interval", 60000);
+pref("browser.sessionstore.max_tabs_undo", 3);
+pref("browser.sessionstore.max_windows_undo", 1);
+
+// Cap the in-memory caches, which are otherwise sized from total RAM.
+pref("browser.cache.memory.capacity", 32768);
+pref("media.memory_cache_max_size", 8192);
+pref("image.mem.surfacecache.max_size_kb", 32768);
+
+// Background machinery that costs memory and network for no local benefit.
+pref("extensions.pocket.enabled", false);
+pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
+pref("toolkit.telemetry.enabled", false);
+EOF
+else
+	remove_file "$FF_PREFS"
+fi
+
 # --------------------------------------------------------------- fastfetch --
 
 FF_CONF=config/includes.chroot_after_packages/etc/xdg/fastfetch/config.jsonc

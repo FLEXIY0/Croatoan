@@ -153,6 +153,36 @@ elif [ "$CBPP_ZRAM" = "true" ]; then
 	warn "zram is on without earlyoom; with no disk swap behind it a full zram device can thrash before the kernel OOM killer reacts"
 fi
 
+# -- firefox ----------------------------------------------------------------
+
+if [ "$CBPP_FIREFOX_LOWMEM" = "true" ]; then
+	_ffp=config/includes.chroot_after_packages/usr/share/firefox-esr/browser/defaults/preferences/zz-cbpp-lowmem.js
+
+	# Firefox reports "prefs parse error" and skips the rest of the file, so a
+	# stray line silently drops every pref after it.
+	_bad=$(grep -vE '^[[:space:]]*(//|$)' "$_ffp" 2>/dev/null |
+		grep -cvE '^pref\("[^"]+", .+\);$' || true)
+	if [ "${_bad:-1}" -eq 0 ]; then
+		ok "firefox prefs parse ($(grep -c '^pref(' "$_ffp") settings)"
+	else
+		fail "$_ffp has $_bad line(s) that are not a well-formed pref() call"
+	fi
+
+	case $CBPP_FIREFOX_FISSION in
+	true) ok "firefox site isolation kept on" ;;
+	false) warn "firefox site isolation is OFF - saves the most memory, but drops the boundary that contains Spectre-style attacks between sites" ;;
+	*) fail "CBPP_FIREFOX_FISSION must be true or false, got '$CBPP_FIREFOX_FISSION'" ;;
+	esac
+
+	case $CBPP_FIREFOX_PROCESS_COUNT in
+	'' | *[!0-9]*) fail "CBPP_FIREFOX_PROCESS_COUNT must be an integer, got '$CBPP_FIREFOX_PROCESS_COUNT'" ;;
+	0) fail "CBPP_FIREFOX_PROCESS_COUNT must be at least 1" ;;
+	*) ok "firefox content processes: $CBPP_FIREFOX_PROCESS_COUNT (default is 8)" ;;
+	esac
+else
+	ok "firefox low-memory defaults disabled"
+fi
+
 # -- fastfetch --------------------------------------------------------------
 
 if [ "$CBPP_FASTFETCH" = "true" ]; then
