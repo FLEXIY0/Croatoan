@@ -261,7 +261,7 @@ fi
 ZRAM_CONF=config/includes.chroot_after_packages/etc/systemd/zram-generator.conf
 ZRAM_SYSCTL=config/includes.chroot_after_packages/etc/sysctl.d/99-cbpp-zram.conf
 EARLYOOM_CONF=config/includes.chroot_after_packages/etc/default/earlyoom
-ZRAM_PKGS=config/package-lists/cbpp-zram.list.chroot
+GEN_PKG_LIST=config/package-lists/cbpp-generated.list.chroot
 
 # These land under includes.chroot_after_packages, which is copied in after the
 # package install, so they win over the conffiles the packages ship.
@@ -323,18 +323,81 @@ fi
 # live-build reads every config/package-lists/*.list.chroot, so the packages
 # these settings need can live in their own generated list instead of being
 # hand-merged into live.list.chroot.
-ZRAM_PKG_LIST=""
-[ "$CBPP_ZRAM" = "true" ] && ZRAM_PKG_LIST="systemd-zram-generator"
-[ "$CBPP_EARLYOOM" = "true" ] && ZRAM_PKG_LIST="${ZRAM_PKG_LIST}${ZRAM_PKG_LIST:+
-}earlyoom"
+# --------------------------------------------------------------- fastfetch --
 
-if [ -n "$ZRAM_PKG_LIST" ]; then
-	write_file "$ZRAM_PKGS" 644 <<EOF
-# $GEN
-$ZRAM_PKG_LIST
+FF_CONF=config/includes.chroot_after_packages/etc/xdg/fastfetch/config.jsonc
+FF_PROFILE=config/includes.chroot_after_packages/etc/profile.d/cbpp-fastfetch.sh
+
+if [ "$CBPP_FASTFETCH" = "true" ]; then
+	# /etc/xdg/fastfetch is one of fastfetch's own config search paths, so this
+	# applies to every user without touching /etc/skel or anyone's dotfiles.
+	write_file "$FF_CONF" 644 <<EOF
+// $GEN
+{
+    "logo": {
+        "type": "file",
+        "source": "/usr/share/cbpp/logo.txt",
+        "padding": { "top": 1, "right": 3 }
+    },
+    "display": { "separator": "  " },
+    "modules": [
+        "title",
+        "separator",
+        "os",
+        "kernel",
+        "uptime",
+        "packages",
+        "shell",
+        "wm",
+        "terminal",
+        "cpu",
+        "memory",
+        "swap",
+        "disk",
+        "break",
+        "colors"
+    ]
+}
 EOF
 else
-	remove_file "$ZRAM_PKGS"
+	remove_file "$FF_CONF"
+fi
+
+if [ "$CBPP_FASTFETCH" = "true" ] && [ "$CBPP_FASTFETCH_ON_LOGIN" = "true" ]; then
+	write_file "$FF_PROFILE" 644 <<EOF
+# $GEN
+#
+# Show the banner on interactive login shells only. Without the guards this
+# would also fire for scp, rsync-over-ssh and other non-interactive sessions,
+# whose protocols break the moment anything unexpected lands on stdout.
+
+if command -v fastfetch >/dev/null 2>&1 && [ -t 1 ] && [ "\${TERM:-dumb}" != "dumb" ]; then
+	case \$- in
+	*i*) fastfetch ;;
+	esac
+fi
+EOF
+else
+	remove_file "$FF_PROFILE"
+fi
+
+# ----------------------------------------------------- generated packages --
+
+GEN_PKGS=""
+add_pkg() { GEN_PKGS="${GEN_PKGS}${GEN_PKGS:+
+}$1"; }
+
+[ "$CBPP_ZRAM" = "true" ] && add_pkg systemd-zram-generator
+[ "$CBPP_EARLYOOM" = "true" ] && add_pkg earlyoom
+[ "$CBPP_FASTFETCH" = "true" ] && add_pkg fastfetch
+
+if [ -n "$GEN_PKGS" ]; then
+	write_file "$GEN_PKG_LIST" 644 <<EOF
+# $GEN
+$GEN_PKGS
+EOF
+else
+	remove_file "$GEN_PKG_LIST"
 fi
 
 # ------------------------------------------------ apt sources in the image --

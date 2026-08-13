@@ -115,7 +115,7 @@ if [ "$CBPP_ZRAM" = "true" ]; then
 		;;
 	esac
 
-	grep -qx "systemd-zram-generator" config/package-lists/cbpp-zram.list.chroot 2>/dev/null ||
+	grep -qx "systemd-zram-generator" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
 		fail "CBPP_ZRAM is on but systemd-zram-generator is not in the package list"
 
 	grep -q "^zram-size = ${CBPP_ZRAM_SIZE}\$" \
@@ -146,11 +146,36 @@ case $CBPP_VM_PAGE_CLUSTER in
 esac
 
 if [ "$CBPP_EARLYOOM" = "true" ]; then
-	grep -qx "earlyoom" config/package-lists/cbpp-zram.list.chroot 2>/dev/null ||
+	grep -qx "earlyoom" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
 		fail "CBPP_EARLYOOM is on but earlyoom is not in the package list"
 	ok "earlyoom enabled"
 elif [ "$CBPP_ZRAM" = "true" ]; then
 	warn "zram is on without earlyoom; with no disk swap behind it a full zram device can thrash before the kernel OOM killer reacts"
+fi
+
+# -- fastfetch --------------------------------------------------------------
+
+if [ "$CBPP_FASTFETCH" = "true" ]; then
+	grep -qx "fastfetch" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_FASTFETCH is on but fastfetch is not in the package list"
+
+	# The config points at an absolute path inside the image; make sure the file
+	# behind it is actually shipped, or fastfetch silently draws no logo.
+	_ffconf=config/includes.chroot_after_packages/etc/xdg/fastfetch/config.jsonc
+	_logo=$(sed -n 's/.*"source": "\(.*\)".*/\1/p' "$_ffconf" 2>/dev/null)
+	if [ -n "$_logo" ] && [ -f "config/includes.chroot_after_packages${_logo}" ]; then
+		ok "fastfetch logo shipped at ${_logo} ($(wc -l < "config/includes.chroot_after_packages${_logo}") lines, $(awk '{ if (length > m) m = length } END { print m }' "config/includes.chroot_after_packages${_logo}") cols)"
+	else
+		fail "fastfetch config references '${_logo:-<unset>}' but that file is not in includes.chroot_after_packages"
+	fi
+
+	if [ "$CBPP_FASTFETCH_ON_LOGIN" = "true" ]; then
+		_ffp=config/includes.chroot_after_packages/etc/profile.d/cbpp-fastfetch.sh
+		sh -n "$_ffp" 2>/dev/null || fail "$_ffp: syntax error"
+		ok "fastfetch runs on interactive login shells"
+	fi
+else
+	ok "fastfetch disabled"
 fi
 
 # -- suite consistency ------------------------------------------------------
