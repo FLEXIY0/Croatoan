@@ -183,6 +183,26 @@ else
 	ok "firefox low-memory defaults disabled"
 fi
 
+# -- wallpaper --------------------------------------------------------------
+
+if [ -n "$CBPP_WALLPAPER" ]; then
+	_wp="config/includes.chroot_after_packages${CBPP_WALLPAPER}"
+	if [ -f "$_wp" ]; then
+		ok "wallpaper shipped at ${CBPP_WALLPAPER} ($(( $(wc -c < "$_wp") / 1024 )) KiB)"
+	else
+		fail "CBPP_WALLPAPER is ${CBPP_WALLPAPER} but no such file under includes.chroot_after_packages"
+	fi
+
+	# nitrogen stores the mode as a bare integer and the enum order is fixed on
+	# disk; anything outside 0-5 silently gives you a wrong or unset background.
+	case $CBPP_WALLPAPER_MODE in
+	0 | 1 | 2 | 3 | 4 | 5) ok "wallpaper mode $CBPP_WALLPAPER_MODE" ;;
+	*) fail "CBPP_WALLPAPER_MODE must be 0-5 (scale/tile/center/zoom/auto/zoom-fill), got '$CBPP_WALLPAPER_MODE'" ;;
+	esac
+else
+	ok "no default wallpaper set"
+fi
+
 # -- fastfetch --------------------------------------------------------------
 
 if [ "$CBPP_FASTFETCH" = "true" ]; then
@@ -194,7 +214,12 @@ if [ "$CBPP_FASTFETCH" = "true" ]; then
 	_ffconf=config/includes.chroot_after_packages/etc/xdg/fastfetch/config.jsonc
 	_logo=$(sed -n 's/.*"source": "\(.*\)".*/\1/p' "$_ffconf" 2>/dev/null)
 	if [ -n "$_logo" ] && [ -f "config/includes.chroot_after_packages${_logo}" ]; then
-		ok "fastfetch logo shipped at ${_logo} ($(wc -l < "config/includes.chroot_after_packages${_logo}") lines, $(awk '{ if (length > m) m = length } END { print m }' "config/includes.chroot_after_packages${_logo}") cols)"
+		# The shipped logo carries ANSI escapes, so measure the width fastfetch
+		# actually lays out with - visible characters, not bytes.
+		_lf="config/includes.chroot_after_packages${_logo}"
+		_cols=$(sed 's/\x1b\[[0-9;]*m//g' "$_lf" |
+			awk '{ if (length > m) m = length } END { print m + 0 }')
+		ok "fastfetch logo '${CBPP_LOGO_STYLE}' at ${_logo} ($(wc -l < "$_lf") lines, $_cols visible cols)"
 	else
 		fail "fastfetch config references '${_logo:-<unset>}' but that file is not in includes.chroot_after_packages"
 	fi

@@ -377,19 +377,58 @@ else
 	remove_file "$FF_PREFS"
 fi
 
+# --------------------------------------------------------------- wallpaper --
+
+# nitrogen reads this at login via `nitrogen --restore` in the openbox
+# autostart. It lands in /etc/skel, so both the live user that live-config
+# creates and any account the installer creates start with it.
+WALLPAPER_CFG=config/includes.chroot_after_packages/etc/skel/.config/nitrogen/bg-saved.cfg
+
+if [ -n "$CBPP_WALLPAPER" ]; then
+	[ -f "config/includes.chroot_after_packages${CBPP_WALLPAPER}" ] ||
+		die "CBPP_WALLPAPER points at ${CBPP_WALLPAPER}, which is not shipped in includes.chroot_after_packages"
+
+	write_file "$WALLPAPER_CFG" 644 <<EOF
+# $GEN
+[:0.0]
+file=${CBPP_WALLPAPER}
+mode=${CBPP_WALLPAPER_MODE}
+bgcolor=${CBPP_WALLPAPER_BGCOLOR}
+EOF
+else
+	remove_file "$WALLPAPER_CFG"
+fi
+
 # --------------------------------------------------------------- fastfetch --
 
 FF_CONF=config/includes.chroot_after_packages/etc/xdg/fastfetch/config.jsonc
 FF_PROFILE=config/includes.chroot_after_packages/etc/profile.d/cbpp-fastfetch.sh
 
+FF_LOGO=config/includes.chroot_after_packages/usr/share/cbpp/logo.txt
+
 if [ "$CBPP_FASTFETCH" = "true" ]; then
+	# The shipped logo is the plain art from assets/ painted by
+	# scripts/cbpp-logo-color, so the art stays editable in one uncoloured
+	# place and the scheme is a single setting rather than a hand-tinted file.
+	command -v python3 >/dev/null 2>&1 ||
+		die "python3 is needed to colourise the logo (CBPP_FASTFETCH is on)"
+	mkdir -p "$(dirname "$FF_LOGO")"
+	scripts/cbpp-logo-color "$CBPP_LOGO_STYLE" assets/logo-plain.txt "$FF_LOGO.cbpp-tmp" ||
+		die "cbpp-logo-color failed for style '$CBPP_LOGO_STYLE'"
+	commit_tmp "$FF_LOGO" "logo painted '$CBPP_LOGO_STYLE'"
+	[ -f "$FF_LOGO" ] && chmod 644 "$FF_LOGO"
+
 	# /etc/xdg/fastfetch is one of fastfetch's own config search paths, so this
 	# applies to every user without touching /etc/skel or anyone's dotfiles.
+	#
+	# file-raw, not file: the logo carries its own escape sequences now, and
+	# "file" would replace them with a single flat colour. fastfetch still
+	# measures the logo by visible width, so the info block stays aligned.
 	write_file "$FF_CONF" 644 <<EOF
 // $GEN
 {
     "logo": {
-        "type": "file",
+        "type": "file-raw",
         "source": "/usr/share/cbpp/logo.txt",
         "padding": { "top": 1, "right": 3 }
     },

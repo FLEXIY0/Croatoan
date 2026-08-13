@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Colourise the CBPP sprite into the ANSI logo fastfetch prints.
+
+    cbpp-logo-color <style> <src> <dest>
+    cbpp-logo-color --preview <src> <dest.html>
+
+The 0 and 1 characters in the art are dithering, not shading: filled cells of
+either kind have the same average neighbour count (5.5 vs 5.9), so colouring by
+symbol would just look like noise. Everything here colours by geometry instead -
+how thick the local mass is, which separates the skull from the tentacles, and
+how deep a cell sits under the silhouette, which gives edges and shading.
+
+Only the 16 basic ANSI colours are used: the banner also prints on the virtual
+consoles at login, and those cannot do 256 colours.
+"""
+import html
+import sys
+
+ANSI = {
+    "white":  ("\033[97m", "#ffffff"),
+    "silver": ("\033[37m", "#c8ccc9"),
+    "grey":   ("\033[90m", "#71787c"),
+    "red":    ("\033[31m", "#bd2020"),
+    "bred":   ("\033[91m", "#f03434"),
+}
+RESET = "\033[0m"
+
+
+def load(path):
+    rows = [l.rstrip("\n") for l in open(path)]
+    w = max(len(l) for l in rows)
+    return [l.ljust(w) for l in rows], len(rows), w
+
+
+def analyse(g, H, W):
+    def filled(r, c):
+        return 0 <= r < H and 0 <= c < W and g[r][c] != " "
+
+    # Thick mass (skull) versus thin strands (tentacles). The threshold of 12
+    # filled cells in a 5x5 window is where the winding strands at the top
+    # separate cleanly without eating into the cranium.
+    thick = [[filled(r, c) and
+              sum(filled(r + dr, c + dc)
+                  for dr in range(-2, 3) for dc in range(-2, 3)) >= 12
+              for c in range(W)] for r in range(H)]
+
+    # Two smoothing passes, or single cells speckle the boundary.
+    for _ in range(2):
+        new = [row[:] for row in thick]
+        for r in range(H):
+            for c in range(W):
+                if not filled(r, c):
+                    continue
+                nb = sum(thick[r + dr][c + dc]
+                         for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+                         if 0 <= r + dr < H and 0 <= c + dc < W and (dr, dc) != (0, 0))
+                if nb >= 5:
+                    new[r][c] = True
+                elif nb <= 1:
+                    new[r][c] = False
+        thick = new
+
+    # Depth: 1 on the silhouette edge, rising towards the interior.
+    depth = [[1 if filled(r, c) else 0 for c in range(W)] for r in range(H)]
+    for step in range(2, 6):
+        for r in range(H):
+            for c in range(W):
+                if depth[r][c] != step - 1:
+                    continue
+                if all(depth[r + dr][c + dc] >= step - 1
+                       for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+                       if 0 <= r + dr < H and 0 <= c + dc < W):
+                    depth[r][c] = step
+
+    return filled, thick, depth
+
+
+def styles(thick, depth):
+    return {
+        "skull-tentacles":
+            lambda r, c: "white" if thick[r][c] else "bred",
+        "outline":
+            lambda r, c: ("bred" if depth[r][c] <= 1 else "white") if thick[r][c] else "bred",
+        "relief":
+            lambda r, c: ("bred" if depth[r][c] <= 1 else
+                          "silver" if depth[r][c] == 2 else "white") if thick[r][c] else "bred",
+        "glow":
+            lambda r, c: ("white" if depth[r][c] <= 1 else
+                          "silver" if depth[r][c] == 2 else "grey") if thick[r][c] else "red",
+        "gradient":
+            lambda r, c: ("bred" if r < 9 else "red" if r < 15 else
+                          "silver" if r < 21 else "white"),
+        "blood":
+            lambda r, c: ("white" if depth[r][c] <= 1 else "red") if thick[r][c] else "bred",
+        "mono":
+            lambda r, c: "white" if thick[r][c] else "grey",
+    }
+
+
+def render_ansi(g, H, W, filled, fn):
+    out = []
+    for r in range(H):
+        line, cur = "", None
+        for c in range(W):
+            if not filled(r, c):
+                line += " "
+                continue
+            col = fn(r, c)
+            if col != cur:
+                line += ANSI[col][0]
+                cur = col
+            line += g[r][c]
+        out.append(line.rstrip() + (RESET if cur else ""))
+    return "\n".join(out) + "\n"
+
+
+def render_html(g, H, W, filled, fn):
+    out = []
+    for r in range(H):
+        parts, buf, cur = [], "", None
+        for c in range(W):
+            col = fn(r, c) if filled(r, c) else None
+            if col != cur:
+                if buf:
+                    parts.append(f'<span style="color:{ANSI[cur][1]}">{html.escape(buf)}</span>'
+                                 if cur else html.escape(buf))
+                buf, cur = "", col
+            buf += g[r][c] if filled(r, c) else " "
+        if buf:
+            parts.append(f'<span style="color:{ANSI[cur][1]}">{html.escape(buf)}</span>'
+                         if cur else html.escape(buf))
+        out.append("".join(parts))
+    return "\n".join(out)
+
+
+def main(argv):
+    preview = argv[0] == "--preview" if argv else False
+    if preview:
+        _, src, dest = argv
+        style = None
+    else:
+        style, src, dest = argv
+
+    g, H, W = load(src)
+    filled, thick, depth = analyse(g, H, W)
+    table = styles(thick, depth)
+
+    if not preview:
+        if style not in table:
+            sys.exit(f"cbpp-logo-color: unknown style '{style}'; "
+                     f"known: {', '.join(sorted(table))}")
+        open(dest, "w").write(render_ansi(g, H, W, filled, table[style]))
+        return
+
+    cards = "".join(
+        f'<figure class="card"><figcaption><span class="tag">{n}</span></figcaption>'
+        f'<pre>{render_html(g, H, W, filled, f)}</pre></figure>'
+        for n, f in table.items())
+    open(dest, "w").write(
+        "<title>CBPP logo colours</title><style>"
+        "body{margin:0;padding:28px 18px;background:#0e1011;color:#d3d7cf;"
+        "font-family:system-ui,sans-serif}"
+        ".grid{max-width:1180px;margin:0 auto;display:grid;gap:20px;"
+        "grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}"
+        ".card{margin:0;background:#1b1e1f;border:1px solid #2b2f31;border-radius:10px;"
+        "overflow:hidden}"
+        "figcaption{padding:12px 14px;border-bottom:1px solid #2b2f31}"
+        ".tag{font-family:ui-monospace,monospace;font-size:11px;font-weight:600;"
+        "color:#0e1011;background:#d3d7cf;padding:2px 7px;border-radius:4px}"
+        "pre{margin:0;padding:16px 14px;background:#000;overflow-x:auto;"
+        "font-family:ui-monospace,monospace;font-size:11px;line-height:1.12}"
+        f"</style><div class=\"grid\">{cards}</div>")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
