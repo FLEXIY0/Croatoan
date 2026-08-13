@@ -3,6 +3,7 @@ systemd-zram-generator
 earlyoom
 fastfetch
 systemd-timesyncd
+xfce4-clipman
 scrot
 libnotify-bin
 libxml2-utils

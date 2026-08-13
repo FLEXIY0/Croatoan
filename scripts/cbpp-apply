@@ -382,23 +382,50 @@ fi
 
 # ------------------------------------------------------------- networking --
 
-IPV6_CONF=config/includes.chroot_after_packages/etc/NetworkManager/conf.d/99-cbpp-ipv6-privacy.conf
+IPV6_NM=config/includes.chroot_after_packages/etc/NetworkManager/conf.d/99-cbpp-ipv6.conf
+IPV6_SYSCTL=config/includes.chroot_after_packages/etc/sysctl.d/99-cbpp-ipv6.conf
 
-if [ "$CBPP_IPV6_PRIVACY" = "true" ]; then
-	# NetworkManager merges every [connection-*] block in conf.d; the suffix is
-	# only there so several files can each contribute defaults.
-	write_file "$IPV6_CONF" 644 <<EOF
+# NetworkManager merges every [connection-*] block in conf.d; the suffix exists
+# only so several files can each contribute defaults.
+if [ "$CBPP_IPV6" = "disabled" ]; then
+	write_file "$IPV6_SYSCTL" 644 <<EOF
 # $GEN
 #
-# Prefer RFC 4941 temporary addresses, so the IPv6 interface identifier stops
-# being a stable fingerprint of this machine's hardware on every network it
-# joins. NetworkManager leaves this unset by default.
+# IPv6 off on real interfaces. Loopback is left alone on purpose: disabling
+# ::1 breaks software that binds it, and buys nothing on the network side.
 
-[connection-cbpp-ipv6-privacy]
-ipv6.ip6-privacy=2
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+EOF
+
+	write_file "$IPV6_NM" 644 <<EOF
+# $GEN
+#
+# Without this NetworkManager still runs IPv6 autoconfiguration on every
+# connection and waits for it before reporting the link up, which shows up as
+# a delay at login even with the sysctls above in place.
+
+[connection-cbpp-ipv6]
+ipv6.method=disabled
 EOF
 else
-	remove_file "$IPV6_CONF"
+	write_file "$IPV6_SYSCTL" 644 <<EOF
+# $GEN
+#
+# IPv6 is enabled; nothing to switch off here. Privacy handling lives in the
+# NetworkManager drop-in next to this file.
+EOF
+
+	write_file "$IPV6_NM" 644 <<EOF
+# $GEN
+#
+# Prefer RFC 4941 temporary addresses, so the interface identifier stops being
+# a stable fingerprint of this machine's hardware on every network it joins.
+# NetworkManager ships this in its own anonymity example and leaves it unset.
+
+[connection-cbpp-ipv6]
+ipv6.ip6-privacy=2
+EOF
 fi
 
 # -------------------------------------------------------------- screenshot --
@@ -490,10 +517,55 @@ if command -v xmllint >/dev/null 2>&1; then
 fi
 
 echo "I: added the Screenshot entry to the Openbox root menu"
+
+# The stock scrot entries contain "&amp;amp;", which reaches the shell as
+# "&amp;" - so it backgrounds the mv and then tries to run a command called
+# "amp". It half-works by accident, which is why nobody noticed. The same
+# entries in rc.xml use "&amp;" correctly, so this is a double-escape in
+# menu.xml alone.
+if grep -q "&amp;amp;" "$MENU"; then
+	sed -i 's/&amp;amp;/\&amp;/g' "$MENU"
+	echo "I: fixed the double-escaped ampersand in the scrot menu entries"
+fi
 EOF
 else
 	remove_file "$SHOT_BIN"
 	remove_file "$SHOT_HOOK"
+fi
+
+# --------------------------------------------------------------- clipboard --
+
+CLIP_HOOK=config/hooks/normal/0997-openbox-clipboard.hook.chroot
+
+if [ -n "$CBPP_CLIPBOARD" ]; then
+	write_file "$CLIP_HOOK" 755 <<EOF
+#!/bin/sh
+# $GEN
+#
+# The openbox autostart launches parcellite, which trixie no longer carries.
+# Point it at the replacement so the line actually starts something.
+set -e
+
+AUTOSTART=/etc/skel/.config/openbox/autostart
+
+if [ ! -f "\$AUTOSTART" ]; then
+	echo "I: \$AUTOSTART not present, skipping the clipboard manager"
+	exit 0
+fi
+
+if grep -q "${CBPP_CLIPBOARD}" "\$AUTOSTART"; then
+	echo "I: clipboard manager already set"
+	exit 0
+fi
+
+grep -q "parcellite" "\$AUTOSTART" ||
+	{ echo "E: no parcellite line in \$AUTOSTART to replace" >&2; exit 1; }
+
+sed -i 's/parcellite/${CBPP_CLIPBOARD}/g' "\$AUTOSTART"
+echo "I: clipboard manager is now ${CBPP_CLIPBOARD}"
+EOF
+else
+	remove_file "$CLIP_HOOK"
 fi
 
 # --------------------------------------------------------------- keybinds --
@@ -693,6 +765,7 @@ add_pkg() { GEN_PKGS="${GEN_PKGS}${GEN_PKGS:+
 # cbpp-metapackage recommends "ntp", which trixie no longer has, so the image
 # ends up with no clock synchronisation at all.
 [ "$CBPP_TIMESYNC" = "true" ] && add_pkg systemd-timesyncd
+[ -n "$CBPP_CLIPBOARD" ] && add_pkg "$CBPP_CLIPBOARD"
 
 # scrot and notify-send already arrive through cbpp-metapackage's Recommends,
 # but naming them here means the screenshot entry cannot quietly stop working

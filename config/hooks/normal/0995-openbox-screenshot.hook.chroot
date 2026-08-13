@@ -45,3 +45,13 @@ if command -v xmllint >/dev/null 2>&1; then
 fi
 
 echo "I: added the Screenshot entry to the Openbox root menu"
+
+# The stock scrot entries contain "&amp;amp;", which reaches the shell as
+# "&amp;" - so it backgrounds the mv and then tries to run a command called
+# "amp". It half-works by accident, which is why nobody noticed. The same
+# entries in rc.xml use "&amp;" correctly, so this is a double-escape in
+# menu.xml alone.
+if grep -q "&amp;amp;" "$MENU"; then
+	sed -i 's/&amp;amp;/\&amp;/g' "$MENU"
+	echo "I: fixed the double-escaped ampersand in the scrot menu entries"
+fi
