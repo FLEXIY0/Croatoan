@@ -5,6 +5,7 @@
 set -e
 
 TRIM_INDEXERS="true"
+TRIM_DAEMONS="true"
 COMPOSITOR="false"
 THUNAR_DAEMON="false"
 SCREENSAVER="i3lock"
@@ -38,6 +39,43 @@ if [ "$TRIM_INDEXERS" = "true" ]; then
 		ln -sf /dev/null /etc/systemd/system/man-db.timer
 		echo "I: masked man-db.timer"
 	fi
+fi
+
+# --- daemons with nothing to do on this hardware ---------------------------
+#
+# Each of these is resident and each has a specific reason to be absent here,
+# rather than being cut for the sake of cutting:
+#
+#   ModemManager           probes for a WWAN modem this laptop does not have
+#   power-profiles-daemon  needs a platform profile driver; Core 2 has none
+#   at-spi                 the accessibility bus, started by every GTK app,
+#                          and used by nothing unless a screen reader runs
+#   apt-daily timers       refresh package lists twice a day, which on 2 GB is
+#                          a 100 MB spike and disk thrash at an arbitrary
+#                          moment - exactly what "it froze for no reason"
+#                          looks like. apt by hand is unaffected.
+#
+# avahi and the video thumbnailers are deliberately left alone: both do
+# something visible.
+if [ "$TRIM_DAEMONS" = "true" ]; then
+	purge modemmanager power-profiles-daemon
+
+	for T in apt-daily.timer apt-daily-upgrade.timer; do
+		[ -e "/usr/lib/systemd/system/$T" ] || continue
+		ln -sf /dev/null "/etc/systemd/system/$T"
+		echo "I: masked $T"
+	done
+
+	# at-spi stays installed - GTK copes either way, and putting it back is
+	# one line - but nothing starts it.
+	mkdir -p /etc/X11/Xsession.d
+	cat >/etc/X11/Xsession.d/60cbpp-no-at-bridge <<'ATSPI'
+# Keep GTK from starting the accessibility bus. Delete this file, or set
+# NO_AT_BRIDGE=0, if you need a screen reader.
+NO_AT_BRIDGE=1
+export NO_AT_BRIDGE
+ATSPI
+	echo "I: the accessibility bus will not be started"
 fi
 
 # --- the screen locker -----------------------------------------------------

@@ -369,7 +369,42 @@ if [ "$CBPP_TERMINAL_STYLE" = "true" ]; then
 	esac
 
 	ok "terminal ${CBPP_TERM_FG} on ${CBPP_TERM_BG} at ${CBPP_TERM_OPACITY}, accent ${CBPP_TERM_ACCENT}"
+
+	case $CBPP_TERM_COLUMNS$CBPP_TERM_ROWS in
+	*[!0-9]* | "") fail "CBPP_TERM_COLUMNS and CBPP_TERM_ROWS must be numbers" ;;
+	esac
+
+	# The banner is the tallest thing the terminal has to hold; a window shorter
+	# than it scrolls the logo away, which is the bug this already had once.
+	if [ "$CBPP_FASTFETCH" = "true" ]; then
+		_llines=$(wc -l < config/includes.chroot_after_packages/usr/share/cbpp/logo.txt 2>/dev/null || echo 0)
+		[ "$CBPP_TERM_ROWS" -gt "$((_llines + 3))" ] ||
+			warn "CBPP_TERM_ROWS=$CBPP_TERM_ROWS leaves no room for the ${_llines}-row banner plus a prompt"
+	fi
 fi
+
+case $CBPP_TERMINAL in
+terminator) ok "terminal emulator: terminator (Python)" ;;
+sakura | xfce4-terminal)
+	grep -qx "$CBPP_TERMINAL" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_TERMINAL is '$CBPP_TERMINAL' but that package is not in the list"
+
+	if [ "$CBPP_TERMINAL" = "sakura" ]; then
+		_sk=config/includes.chroot_after_packages/etc/skel/.config/sakura/sakura.conf
+		grep -q "^colorset1_back=rgba(" "$_sk" 2>/dev/null ||
+			fail "$_sk is missing or has no colorset1_back - sakura would start with its own colours"
+	fi
+
+	ok "terminal emulator: $CBPP_TERMINAL, replacing terminator"
+	;;
+*) fail "CBPP_TERMINAL must be sakura, xfce4-terminal or terminator, got '$CBPP_TERMINAL'" ;;
+esac
+
+case $CBPP_TRIM_DAEMONS in
+true) ok "ModemManager, power-profiles-daemon, at-spi and the apt-daily timers are out" ;;
+false) ok "daemons left as upstream ships them" ;;
+*) fail "CBPP_TRIM_DAEMONS must be true or false, got '$CBPP_TRIM_DAEMONS'" ;;
+esac
 
 # -- keyboard ---------------------------------------------------------------
 

@@ -35,6 +35,18 @@ GPU. The interesting part is that the hard problem there is not memory:
   1.4 GHz Core 2 Duo and a swap fault is on the critical path.
 - `CBPP_MITIGATIONS="off"` is a real security decision and is documented as one
   where it is set.
+- `CBPP_TERMINAL="sakura"` replaces terminator, which is Python and therefore
+  carries an interpreter plus `python3-gi`, `python3-cairo`, `python3-dbus` and
+  `python3-psutil` in every window. Both draw through VTE, so nothing looks
+  different; sakura is an 81 KB C binary. Splitting a window into panes is what
+  you give up.
+- `CBPP_TRIM_DAEMONS` removes ModemManager (no WWAN modem), power-profiles-daemon
+  (no platform profile driver on a Core 2), the at-spi accessibility bus, and
+  the apt-daily timers. `avahi` and the video thumbnailers are deliberately left
+  alone - both do something visible.
+
+`croatoan-ram` prints where the memory went, by PSS rather than RSS, so the
+numbers add up to something real.
 
 The name is not everywhere it could be. `CBPP_BRANDING` reaches `os-release`,
 `/etc/issue`, the welcome script, the root menu, the boot splash, the installer

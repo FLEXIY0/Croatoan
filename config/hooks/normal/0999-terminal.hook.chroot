@@ -5,19 +5,83 @@
 # window has the focus.
 set -e
 
+TERMINAL="sakura"
+
 # --- terminator ------------------------------------------------------------
-for CFG in /etc/skel/.config/terminator/config /root/.config/terminator/config
-do
-	[ -f "$CFG" ] || continue
+if [ "$TERMINAL" = "terminator" ]; then
+	for CFG in /etc/skel/.config/terminator/config /root/.config/terminator/config
+	do
+		[ -f "$CFG" ] || continue
 
-	sed -i 's|^ *background_color *=.*|    background_color = "#000000"|' "$CFG"
-	sed -i 's|^ *foreground_color *=.*|    foreground_color = "#b8b8b8"|' "$CFG"
-	sed -i 's|^ *background_darkness *=.*|    background_darkness = 0.92|' "$CFG"
-	sed -i 's|^ *cursor_color *=.*|    cursor_color = "#cc0000"|' "$CFG"
-	sed -i 's|^ *palette *=.*|    palette = "#000000:#cc0000:#4e9a06:#c4a000:#3465a4:#75507b:#06989a:#b8b8b8:#555753:#ef2929:#8ae234:#fce94f:#729fcf:#ad7fa8:#34e2e2:#eeeeec"|' "$CFG"
+		sed -i 's|^ *background_color *=.*|    background_color = "#000000"|' "$CFG"
+		sed -i 's|^ *foreground_color *=.*|    foreground_color = "#b8b8b8"|' "$CFG"
+		sed -i 's|^ *background_darkness *=.*|    background_darkness = 0.92|' "$CFG"
+		sed -i 's|^ *cursor_color *=.*|    cursor_color = "#cc0000"|' "$CFG"
+		sed -i 's|^ *palette *=.*|    palette = "#000000:#cc0000:#4e9a06:#c4a000:#3465a4:#75507b:#06989a:#b8b8b8:#555753:#ef2929:#8ae234:#fce94f:#729fcf:#ad7fa8:#34e2e2:#eeeeec"|' "$CFG"
 
-	echo "I: restyled $CFG"
-done
+		echo "I: restyled $CFG"
+	done
+fi
+
+# --- sakura ----------------------------------------------------------------
+#
+# The config itself is shipped as an include; what has to happen here is
+# taking terminator out and pointing everything that names it somewhere else.
+# Nothing in the image depends on terminator, so purging it takes the whole
+# python3-gi/cairo/dbus/psutil set with it on autoremove.
+if [ "$TERMINAL" = "sakura" ]; then
+	command -v sakura >/dev/null 2>&1 ||
+		{ echo "E: sakura is not installed" >&2; exit 1; }
+
+	if dpkg -l terminator 2>/dev/null | grep -q "^ii"; then
+		DEBIAN_FRONTEND=noninteractive apt-get -y purge terminator
+		DEBIAN_FRONTEND=noninteractive apt-get -y autoremove --purge
+		echo "I: purged terminator"
+	fi
+
+	# sakura ships no alternatives registration of its own, and helpers.rc and
+	# the Super+Return binding both go through x-terminal-emulator.
+	update-alternatives --install /usr/bin/x-terminal-emulator \
+		x-terminal-emulator /usr/bin/sakura 50
+	update-alternatives --set x-terminal-emulator /usr/bin/sakura
+
+	for D in /etc/skel /root; do
+		MENU="$D/.config/openbox/menu.xml"
+		TINT="$D/.config/tint2/tint2rc"
+		UCA="$D/.config/Thunar/uca.xml"
+
+		[ -f "$MENU" ] && sed -i 's|<execute>terminator -u</execute>|<execute>sakura</execute>|' "$MENU"
+		[ -f "$TINT" ] && sed -i 's|applications/terminator.desktop|applications/sakura.desktop|' "$TINT"
+
+		# Thunar's "Open Terminal Here", both the plain and the root one.
+		if [ -f "$UCA" ]; then
+			# cbpp-configs ships this file with its XML declaration written
+			# backwards - version has to come before encoding - so it is not
+			# well-formed as it stands. Thunar parses it anyway, because
+			# GMarkup is lenient, but it means the check below would blame us
+			# for a defect that was already there. Correcting it is a one-line
+			# strict improvement that changes nothing about how Thunar reads it.
+			sed -i '1s|<?xml encoding="UTF-8" version="1.0"?>|<?xml version="1.0" encoding="UTF-8"?>|' "$UCA"
+
+			sed -i -e 's|terminator --working-directory %f|sakura -d %f|g' \
+				-e 's|<icon>terminator</icon>|<icon>utilities-terminal</icon>|g' "$UCA"
+		fi
+
+		for F in "$MENU" "$UCA"; do
+			[ -f "$F" ] || continue
+			if command -v xmllint >/dev/null 2>&1; then
+				xmllint --noout "$F" ||
+					{ echo "E: $F is not well-formed after editing" >&2; exit 1; }
+			fi
+		done
+	done
+
+	# root has no skel copy of these; give it the same terminal config.
+	mkdir -p /root/.config/sakura
+	cp /etc/skel/.config/sakura/sakura.conf /root/.config/sakura/sakura.conf
+
+	echo "I: sakura is the terminal"
+fi
 
 # --- the prompt ------------------------------------------------------------
 for RC in /etc/skel/.bashrc /root/.bashrc

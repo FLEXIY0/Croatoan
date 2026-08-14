@@ -990,6 +990,7 @@ if $_trim_any; then
 set -e
 
 TRIM_INDEXERS="${CBPP_TRIM_INDEXERS}"
+TRIM_DAEMONS="${CBPP_TRIM_DAEMONS}"
 COMPOSITOR="${CBPP_COMPOSITOR}"
 THUNAR_DAEMON="${CBPP_THUNAR_DAEMON}"
 SCREENSAVER="${CBPP_SCREENSAVER}"
@@ -1023,6 +1024,43 @@ if [ "\$TRIM_INDEXERS" = "true" ]; then
 		ln -sf /dev/null /etc/systemd/system/man-db.timer
 		echo "I: masked man-db.timer"
 	fi
+fi
+
+# --- daemons with nothing to do on this hardware ---------------------------
+#
+# Each of these is resident and each has a specific reason to be absent here,
+# rather than being cut for the sake of cutting:
+#
+#   ModemManager           probes for a WWAN modem this laptop does not have
+#   power-profiles-daemon  needs a platform profile driver; Core 2 has none
+#   at-spi                 the accessibility bus, started by every GTK app,
+#                          and used by nothing unless a screen reader runs
+#   apt-daily timers       refresh package lists twice a day, which on 2 GB is
+#                          a 100 MB spike and disk thrash at an arbitrary
+#                          moment - exactly what "it froze for no reason"
+#                          looks like. apt by hand is unaffected.
+#
+# avahi and the video thumbnailers are deliberately left alone: both do
+# something visible.
+if [ "\$TRIM_DAEMONS" = "true" ]; then
+	purge modemmanager power-profiles-daemon
+
+	for T in apt-daily.timer apt-daily-upgrade.timer; do
+		[ -e "/usr/lib/systemd/system/\$T" ] || continue
+		ln -sf /dev/null "/etc/systemd/system/\$T"
+		echo "I: masked \$T"
+	done
+
+	# at-spi stays installed - GTK copes either way, and putting it back is
+	# one line - but nothing starts it.
+	mkdir -p /etc/X11/Xsession.d
+	cat >/etc/X11/Xsession.d/60cbpp-no-at-bridge <<'ATSPI'
+# Keep GTK from starting the accessibility bus. Delete this file, or set
+# NO_AT_BRIDGE=0, if you need a screen reader.
+NO_AT_BRIDGE=1
+export NO_AT_BRIDGE
+ATSPI
+	echo "I: the accessibility bus will not be started"
 fi
 
 # --- the screen locker -----------------------------------------------------
@@ -1290,6 +1328,26 @@ fi
 
 TERM_HOOK=config/hooks/normal/0999-terminal.hook.chroot
 TERM_BASHRC=config/includes.chroot_after_packages/usr/share/cbpp/bashrc
+TERM_SAKURA=config/includes.chroot_after_packages/etc/skel/.config/sakura/sakura.conf
+
+# sakura stores colours the way GdkRGBA prints them, so #rrggbb has to become
+# rgb(r,g,b) - and rgba(...) when it carries the opacity.
+hex_rgb() {
+	_h=${1#\#}
+	printf 'rgb(%d,%d,%d)' \
+		"0x$(printf '%s' "$_h" | cut -c1-2)" \
+		"0x$(printf '%s' "$_h" | cut -c3-4)" \
+		"0x$(printf '%s' "$_h" | cut -c5-6)"
+}
+
+hex_rgba() {
+	_h=${1#\#}
+	printf 'rgba(%d,%d,%d,%s)' \
+		"0x$(printf '%s' "$_h" | cut -c1-2)" \
+		"0x$(printf '%s' "$_h" | cut -c3-4)" \
+		"0x$(printf '%s' "$_h" | cut -c5-6)" \
+		"$2"
+}
 
 if [ "$CBPP_TERMINAL_STYLE" = "true" ]; then
 	# Slots 0, 1 and 7 of terminator's palette are what "black", "red" and
@@ -1298,6 +1356,37 @@ if [ "$CBPP_TERMINAL_STYLE" = "true" ]; then
 	_palette="${CBPP_TERM_BG}:${CBPP_TERM_ACCENT}:#4e9a06:#c4a000:#3465a4"
 	_palette="${_palette}:#75507b:#06989a:${CBPP_TERM_FG}:#555753:#ef2929"
 	_palette="${_palette}:#8ae234:#fce94f:#729fcf:#ad7fa8:#34e2e2:#eeeeec"
+
+	if [ "$CBPP_TERMINAL" = "sakura" ]; then
+		# Every value below was read out of sakura's own source rather than
+		# guessed: the group is [sakura], booleans are true/false, the bell and
+		# the cursor are the strings Yes/No, and the palette is an index into
+		# {Solarized, Tango, Gruvbox, Nord, Xterm, Linux, Rxvt, Hybrid} - 1 is
+		# Tango, which is the palette CBPP's terminator profile already used.
+		write_file "$TERM_SAKURA" 644 <<EOF
+# $GEN
+[sakura]
+font=Monospace 10
+colorset1_fore=$(hex_rgb "$CBPP_TERM_FG")
+colorset1_back=$(hex_rgba "$CBPP_TERM_BG" "$CBPP_TERM_OPACITY")
+colorset1_curs=$(hex_rgb "$CBPP_TERM_ACCENT")
+colorset1_scheme=0
+last_colorset=1
+palette=1
+bold_is_bright=true
+scrollbar=false
+scroll_lines=5000
+show_tab_bar=multiple
+show_always_first_tab=false
+less_questions=true
+audible_bell=No
+blinking_cursor=No
+window_columns=${CBPP_TERM_COLUMNS}
+window_rows=${CBPP_TERM_ROWS}
+EOF
+	else
+		remove_file "$TERM_SAKURA"
+	fi
 
 	write_file "$TERM_BASHRC" 644 <<EOF
 # $GEN
@@ -1339,19 +1428,83 @@ EOF
 # window has the focus.
 set -e
 
+TERMINAL="${CBPP_TERMINAL}"
+
 # --- terminator ------------------------------------------------------------
-for CFG in /etc/skel/.config/terminator/config /root/.config/terminator/config
-do
-	[ -f "\$CFG" ] || continue
+if [ "\$TERMINAL" = "terminator" ]; then
+	for CFG in /etc/skel/.config/terminator/config /root/.config/terminator/config
+	do
+		[ -f "\$CFG" ] || continue
 
-	sed -i 's|^ *background_color *=.*|    background_color = "${CBPP_TERM_BG}"|' "\$CFG"
-	sed -i 's|^ *foreground_color *=.*|    foreground_color = "${CBPP_TERM_FG}"|' "\$CFG"
-	sed -i 's|^ *background_darkness *=.*|    background_darkness = ${CBPP_TERM_OPACITY}|' "\$CFG"
-	sed -i 's|^ *cursor_color *=.*|    cursor_color = "${CBPP_TERM_ACCENT}"|' "\$CFG"
-	sed -i 's|^ *palette *=.*|    palette = "${_palette}"|' "\$CFG"
+		sed -i 's|^ *background_color *=.*|    background_color = "${CBPP_TERM_BG}"|' "\$CFG"
+		sed -i 's|^ *foreground_color *=.*|    foreground_color = "${CBPP_TERM_FG}"|' "\$CFG"
+		sed -i 's|^ *background_darkness *=.*|    background_darkness = ${CBPP_TERM_OPACITY}|' "\$CFG"
+		sed -i 's|^ *cursor_color *=.*|    cursor_color = "${CBPP_TERM_ACCENT}"|' "\$CFG"
+		sed -i 's|^ *palette *=.*|    palette = "${_palette}"|' "\$CFG"
 
-	echo "I: restyled \$CFG"
-done
+		echo "I: restyled \$CFG"
+	done
+fi
+
+# --- sakura ----------------------------------------------------------------
+#
+# The config itself is shipped as an include; what has to happen here is
+# taking terminator out and pointing everything that names it somewhere else.
+# Nothing in the image depends on terminator, so purging it takes the whole
+# python3-gi/cairo/dbus/psutil set with it on autoremove.
+if [ "\$TERMINAL" = "sakura" ]; then
+	command -v sakura >/dev/null 2>&1 ||
+		{ echo "E: sakura is not installed" >&2; exit 1; }
+
+	if dpkg -l terminator 2>/dev/null | grep -q "^ii"; then
+		DEBIAN_FRONTEND=noninteractive apt-get -y purge terminator
+		DEBIAN_FRONTEND=noninteractive apt-get -y autoremove --purge
+		echo "I: purged terminator"
+	fi
+
+	# sakura ships no alternatives registration of its own, and helpers.rc and
+	# the Super+Return binding both go through x-terminal-emulator.
+	update-alternatives --install /usr/bin/x-terminal-emulator \\
+		x-terminal-emulator /usr/bin/sakura 50
+	update-alternatives --set x-terminal-emulator /usr/bin/sakura
+
+	for D in /etc/skel /root; do
+		MENU="\$D/.config/openbox/menu.xml"
+		TINT="\$D/.config/tint2/tint2rc"
+		UCA="\$D/.config/Thunar/uca.xml"
+
+		[ -f "\$MENU" ] && sed -i 's|<execute>terminator -u</execute>|<execute>sakura</execute>|' "\$MENU"
+		[ -f "\$TINT" ] && sed -i 's|applications/terminator.desktop|applications/sakura.desktop|' "\$TINT"
+
+		# Thunar's "Open Terminal Here", both the plain and the root one.
+		if [ -f "\$UCA" ]; then
+			# cbpp-configs ships this file with its XML declaration written
+			# backwards - version has to come before encoding - so it is not
+			# well-formed as it stands. Thunar parses it anyway, because
+			# GMarkup is lenient, but it means the check below would blame us
+			# for a defect that was already there. Correcting it is a one-line
+			# strict improvement that changes nothing about how Thunar reads it.
+			sed -i '1s|<?xml encoding="UTF-8" version="1.0"?>|<?xml version="1.0" encoding="UTF-8"?>|' "\$UCA"
+
+			sed -i -e 's|terminator --working-directory %f|sakura -d %f|g' \\
+				-e 's|<icon>terminator</icon>|<icon>utilities-terminal</icon>|g' "\$UCA"
+		fi
+
+		for F in "\$MENU" "\$UCA"; do
+			[ -f "\$F" ] || continue
+			if command -v xmllint >/dev/null 2>&1; then
+				xmllint --noout "\$F" ||
+					{ echo "E: \$F is not well-formed after editing" >&2; exit 1; }
+			fi
+		done
+	done
+
+	# root has no skel copy of these; give it the same terminal config.
+	mkdir -p /root/.config/sakura
+	cp /etc/skel/.config/sakura/sakura.conf /root/.config/sakura/sakura.conf
+
+	echo "I: sakura is the terminal"
+fi
 
 # --- the prompt ------------------------------------------------------------
 for RC in /etc/skel/.bashrc /root/.bashrc
@@ -1419,6 +1572,7 @@ EOF
 else
 	remove_file "$TERM_HOOK"
 	remove_file "$TERM_BASHRC"
+	remove_file "$TERM_SAKURA"
 fi
 
 # ---------------------------------------------------------------- keyboard --
@@ -1669,6 +1823,10 @@ iHD)
 esac
 
 [ "$CBPP_SCREENSAVER" = "i3lock" ] && add_pkg i3lock
+
+# terminator arrives through cbpp-metapackage's Recommends; the replacement has
+# to be named here or it would not be installed to replace it with.
+[ "$CBPP_TERMINAL" != "terminator" ] && add_pkg "$CBPP_TERMINAL"
 
 # gtk-update-icon-cache lives here, and nothing else in the image pulls it in.
 [ "$CBPP_ICON_CACHE" = "true" ] && add_pkg libgtk-3-bin

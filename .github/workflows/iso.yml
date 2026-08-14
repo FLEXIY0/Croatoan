@@ -14,7 +14,12 @@ on:
 
 concurrency:
   group: iso-${{ github.ref }}
-  cancel-in-progress: true
+  # Only cancel a running build for pull requests, where the point is fast
+  # feedback on the newest commit. On a branch push, cancelling throws away 17
+  # minutes of work that was about to produce a testable ISO - and pushing
+  # three commits in a row, which is normal, cancelled two builds in a row.
+  # With this off, an in-progress run finishes and only queued runs collapse.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Runs in seconds and catches the mistakes that would otherwise surface half
