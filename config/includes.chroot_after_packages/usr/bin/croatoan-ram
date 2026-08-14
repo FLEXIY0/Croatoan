@@ -1,0 +1,58 @@
+#!/bin/sh
+# Where the memory actually went.
+#
+# Every "how much RAM does X use" answer is wrong unless it says which number
+# it means. RSS counts every shared library page against every process that
+# maps it, so adding up RSS on a desktop double-counts GTK several times over
+# and comes out larger than the machine. PSS divides each shared page between
+# the processes sharing it, so the column below does add up to something real.
+#
+# Read straight out of /proc, so it needs nothing installed.
+#
+# Usage: croatoan-ram [N]      N = how many rows, default 20
+set -eu
+
+ROWS=${1:-20}
+
+printf '%8s  %6s  %s\n' 'PSS' 'COUNT' 'PROCESS'
+printf '%8s  %6s  %s\n' '--------' '------' '-------------------------'
+
+for _d in /proc/[0-9]*; do
+	[ -r "$_d/smaps_rollup" ] || continue
+
+	# Kernel threads have no smaps_rollup content; comm is the short name,
+	# which is what we want to group by.
+	_pss=$(awk '/^Pss:/ { s += $2 } END { print s + 0 }' "$_d/smaps_rollup" 2>/dev/null) || continue
+	[ "${_pss:-0}" -gt 0 ] || continue
+
+	_name=$(cat "$_d/comm" 2>/dev/null) || continue
+	printf '%s %s\n' "$_name" "$_pss"
+done | awk -v rows="$ROWS" '
+	{ pss[$1] += $2; n[$1] += 1; total += $2 }
+	END {
+		for (p in pss) printf "%d\t%d\t%s\n", pss[p], n[p], p
+		printf "%d\t%d\t%s\n", -1, total, "TOTAL"
+	}
+' | sort -rn | awk -v rows="$ROWS" '
+	$1 == -1 { total = $2; next }
+	shown < rows { printf "%6.1f M  %6d  %s\n", $1 / 1024, $2, $3; shown++; sum += $1 }
+	END {
+		printf "%8s  %6s  %s\n", "--------", "------", "-------------------------"
+		printf "%6.1f M  %6s  %s\n", sum / 1024, "", "these"
+		printf "%6.1f M  %6s  %s\n", total / 1024, "", "everything in userspace"
+	}
+'
+
+echo
+awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree|Dirty):/ { printf "%-14s %8.1f M\n", $1, $2 / 1024 }' /proc/meminfo
+
+if [ -r /sys/block/zram0/mm_stat ]; then
+	echo
+	awk '{
+		if ($3 > 0)
+			printf "zram           %8.1f M stored, %.1f M in RAM, %.1fx\n",
+				$1 / 1048576, $3 / 1048576, $1 / $3
+		else
+			print "zram           set up but holding nothing yet"
+	}' /sys/block/zram0/mm_stat
+fi
