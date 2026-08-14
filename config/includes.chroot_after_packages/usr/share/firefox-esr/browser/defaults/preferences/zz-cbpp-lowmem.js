@@ -11,7 +11,7 @@ pref("browser.tabs.unloadOnLowMemory", true);
 pref("fission.autostart", false);
 
 // Content processes, down from the default of 8.
-pref("dom.ipc.processCount", 2);
+pref("dom.ipc.processCount", 1);
 
 // Do not keep a spare content process warm for the next tab. It buys tab-open
 // latency at the price of a whole idle process.
@@ -36,3 +36,20 @@ pref("image.mem.surfacecache.max_size_kb", 32768);
 pref("extensions.pocket.enabled", false);
 pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
 pref("toolkit.telemetry.enabled", false);
+
+// -- video, on a GPU that predates VP9 -------------------------------------
+//
+// Steering the codec is the whole game here. A GMA 4500MHD decodes H.264 in
+// hardware and knows nothing about VP9 or AV1, so when YouTube serves VP9 -
+// which it does by default - the CPU decodes it, and 720p on a 1.4 GHz Core 2
+// Duo does not keep up. Refusing WebM inside Media Source Extensions makes
+// YouTube fall back to H.264, which the GPU takes off the CPU entirely.
+//
+// The cost: a site that offers nothing but VP9 or AV1 will not play video.
+pref("media.mediasource.webm.enabled", false);
+pref("media.av1.enabled", false);
+
+// Ask for the hardware decoder, and ask again past the driver blocklist -
+// which is what otherwise turns this off silently on a GPU this old.
+pref("media.ffmpeg.vaapi.enabled", true);
+pref("media.hardware-video-decoding.force-enabled", true);

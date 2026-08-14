@@ -250,6 +250,55 @@ else
 	ok "fastfetch disabled"
 fi
 
+# -- old and small machines -------------------------------------------------
+
+case $CBPP_HWVIDEO in
+"") ;;
+i965 | iHD)
+	_vadrv=i965-va-driver
+	[ "$CBPP_HWVIDEO" = "iHD" ] && _vadrv=intel-media-va-driver
+	grep -qx "$_vadrv" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_HWVIDEO is '$CBPP_HWVIDEO' but $_vadrv is not in the package list"
+	ok "hardware video via $_vadrv"
+	;;
+*) fail "CBPP_HWVIDEO must be empty, i965 or iHD, got '$CBPP_HWVIDEO'" ;;
+esac
+
+case $CBPP_SCREENSAVER in
+xscreensaver | none) ok "screen locking: $CBPP_SCREENSAVER" ;;
+i3lock)
+	grep -qx "i3lock" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_SCREENSAVER is i3lock but i3lock is not in the package list"
+	ok "screen locking: i3lock, with X blanking behind it"
+	;;
+*) fail "CBPP_SCREENSAVER must be xscreensaver, i3lock or none, got '$CBPP_SCREENSAVER'" ;;
+esac
+
+case $CBPP_MITIGATIONS in
+on) ok "CPU mitigations left on" ;;
+off)
+	# Two places have to agree, or the live session and the installed system
+	# behave differently and nobody notices until they benchmark both.
+	grep -q "mitigations=off" config/binary ||
+		fail "CBPP_MITIGATIONS is off but the live boot cmdline does not say so"
+	[ -f config/includes.chroot_after_packages/etc/default/grub.d/99-cbpp.cfg ] ||
+		fail "CBPP_MITIGATIONS is off but the grub drop-in for the installed system is missing"
+	warn "CPU mitigations are OFF - Spectre and Meltdown are unmitigated on this image"
+	;;
+*) fail "CBPP_MITIGATIONS must be on or off, got '$CBPP_MITIGATIONS'" ;;
+esac
+
+if [ "$CBPP_FIREFOX_VIDEO" = "h264" ]; then
+	_ffp=config/includes.chroot_after_packages/usr/share/firefox-esr/browser/defaults/preferences/zz-cbpp-lowmem.js
+	grep -q "media.ffmpeg.vaapi.enabled" "$_ffp" 2>/dev/null ||
+		fail "CBPP_FIREFOX_VIDEO is h264 but the vaapi prefs are not in $_ffp"
+	[ -n "$CBPP_HWVIDEO" ] ||
+		warn "CBPP_FIREFOX_VIDEO forces H.264 but CBPP_HWVIDEO is empty - nothing will decode it in hardware"
+	ok "firefox steered onto H.264 with hardware decoding"
+elif [ -n "$CBPP_FIREFOX_VIDEO" ]; then
+	fail "CBPP_FIREFOX_VIDEO must be empty or h264, got '$CBPP_FIREFOX_VIDEO'"
+fi
+
 # -- display manager --------------------------------------------------------
 
 grep -qx "$CBPP_DISPLAY_MANAGER" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||

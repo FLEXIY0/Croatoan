@@ -194,6 +194,13 @@ set_key config/binary LB_ISO_VOLUME "${BRAND_ID}-${CBPP_VERSION}-@ISOVOLUME_TS@"
 # rather than being a second place to keep in sync.
 _bootappend_live=$(printf '%s\n' "$CBPP_BOOTAPPEND_LIVE" |
 	sed "s/hostname=[^ ]*/hostname=${CBPP_HOSTNAME}/")
+
+# The live session gets the same kernel command line the installed system will,
+# so what you try from the ISO is what you end up running. The installed side
+# comes from the grub drop-in further down.
+[ "$CBPP_MITIGATIONS" = "off" ] &&
+	_bootappend_live="${_bootappend_live} mitigations=off"
+
 set_key config/binary LB_BOOTAPPEND_LIVE "$_bootappend_live"
 set_key config/binary LB_BOOTAPPEND_LIVE_FAILSAFE "$CBPP_BOOTAPPEND_LIVE_FAILSAFE"
 set_key config/binary LB_BOOTAPPEND_INSTALL "$CBPP_BOOTAPPEND_INSTALL"
@@ -354,6 +361,33 @@ fi
 FF_PREFS=config/includes.chroot_after_packages/usr/share/firefox-esr/browser/defaults/preferences/zz-cbpp-lowmem.js
 
 if [ "$CBPP_FIREFOX_LOWMEM" = "true" ]; then
+	# Built up first and interpolated below, so the file is still written in
+	# one piece: appending after write_file would corrupt the tree under
+	# --check, where write_file deliberately does not write.
+	_ff_video=""
+	if [ "$CBPP_FIREFOX_VIDEO" = "h264" ]; then
+		_ff_video=$(cat <<'EOF'
+
+// -- video, on a GPU that predates VP9 -------------------------------------
+//
+// Steering the codec is the whole game here. A GMA 4500MHD decodes H.264 in
+// hardware and knows nothing about VP9 or AV1, so when YouTube serves VP9 -
+// which it does by default - the CPU decodes it, and 720p on a 1.4 GHz Core 2
+// Duo does not keep up. Refusing WebM inside Media Source Extensions makes
+// YouTube fall back to H.264, which the GPU takes off the CPU entirely.
+//
+// The cost: a site that offers nothing but VP9 or AV1 will not play video.
+pref("media.mediasource.webm.enabled", false);
+pref("media.av1.enabled", false);
+
+// Ask for the hardware decoder, and ask again past the driver blocklist -
+// which is what otherwise turns this off silently on a GPU this old.
+pref("media.ffmpeg.vaapi.enabled", true);
+pref("media.hardware-video-decoding.force-enabled", true);
+EOF
+)
+	fi
+
 	write_file "$FF_PREFS" 644 <<EOF
 // $GEN
 //
@@ -393,6 +427,7 @@ pref("image.mem.surfacecache.max_size_kb", 32768);
 pref("extensions.pocket.enabled", false);
 pref("browser.newtabpage.activity-stream.feeds.section.topstories", false);
 pref("toolkit.telemetry.enabled", false);
+${_ff_video}
 EOF
 else
 	remove_file "$FF_PREFS"
@@ -873,6 +908,151 @@ fi
 EOF
 else
 	remove_file "$FF_PROFILE"
+fi
+
+# -------------------------------------------- old and small machines --
+
+LOWMEM_HOOK=config/hooks/normal/0991-lowmem.hook.chroot
+GRUB_DROPIN=config/includes.chroot_after_packages/etc/default/grub.d/99-cbpp.cfg
+
+# The installed system's kernel command line.
+#
+# /etc/default/grub is a grub2-common conffile, and grub2-common is installed
+# by the installer rather than being in this chroot - so anything written there
+# now would be replaced. grub-mkconfig sources /etc/default/grub.d/*.cfg after
+# it, which is ours and survives.
+if [ "$CBPP_MITIGATIONS" = "off" ]; then
+	write_file "$GRUB_DROPIN" 644 <<EOF
+# $GEN
+#
+# See CBPP_MITIGATIONS in cbpp.conf: this trades Spectre and Meltdown hardening
+# for the 10-30% those software mitigations cost a CPU with no hardware ones.
+GRUB_CMDLINE_LINUX_DEFAULT="\${GRUB_CMDLINE_LINUX_DEFAULT} mitigations=off"
+EOF
+else
+	remove_file "$GRUB_DROPIN"
+fi
+
+_trim_any=false
+[ "$CBPP_TRIM_INDEXERS" = "true" ] && _trim_any=true
+[ "$CBPP_COMPOSITOR" = "false" ] && _trim_any=true
+[ "$CBPP_THUNAR_DAEMON" = "false" ] && _trim_any=true
+[ "$CBPP_SCREENSAVER" != "xscreensaver" ] && _trim_any=true
+
+if $_trim_any; then
+	write_file "$LOWMEM_HOOK" 755 <<EOF
+#!/bin/sh
+# $GEN
+#
+# The low-memory profile: what comes out on a machine with 2 GB and a 2009 GPU.
+set -e
+
+TRIM_INDEXERS="${CBPP_TRIM_INDEXERS}"
+COMPOSITOR="${CBPP_COMPOSITOR}"
+THUNAR_DAEMON="${CBPP_THUNAR_DAEMON}"
+SCREENSAVER="${CBPP_SCREENSAVER}"
+
+purge() {
+	_list=""
+	for _p in "\$@"; do
+		if dpkg -l "\$_p" 2>/dev/null | grep -q "^ii"; then
+			_list="\$_list \$_p"
+		fi
+	done
+
+	[ -n "\$_list" ] || return 0
+	DEBIAN_FRONTEND=noninteractive apt-get -y purge \$_list
+	echo "I: purged\$_list"
+}
+
+# --- background indexers ---------------------------------------------------
+#
+# update-apt-xapian-index peaks over 300 MB and runs weekly; on 2 GB that is a
+# swap storm, and nothing but synaptic's quick search reads what it builds.
+# plocate walks the whole filesystem daily. live-build's own 5010 and 5030
+# hooks build these indices later in the build, but both test for the command
+# first, so removing the packages here just makes them no-ops.
+if [ "\$TRIM_INDEXERS" = "true" ]; then
+	purge apt-xapian-index plocate mlocate
+
+	# man pages stay; only the index rebuild goes.
+	rm -f /etc/cron.daily/man-db
+	if [ -e /usr/lib/systemd/system/man-db.timer ]; then
+		ln -sf /dev/null /etc/systemd/system/man-db.timer
+		echo "I: masked man-db.timer"
+	fi
+fi
+
+# --- the screen locker -----------------------------------------------------
+#
+# xscreensaver is resident for the whole session. i3lock only exists while the
+# screen is locked, and X blanks the screen by itself, so the Lock Screen
+# entries move over and the Screensaver settings entry goes - it would
+# configure a program that is no longer there.
+if [ "\$SCREENSAVER" != "xscreensaver" ]; then
+	purge xscreensaver xscreensaver-data
+
+	for F in /etc/skel/.config/openbox/rc.xml /etc/skel/.config/openbox/menu.xml \\
+		/root/.config/openbox/rc.xml /root/.config/openbox/menu.xml
+	do
+		[ -f "\$F" ] || continue
+
+		if [ "\$SCREENSAVER" = "i3lock" ]; then
+			sed -i 's|xscreensaver-command -lock|i3lock -c 000000|g' "\$F"
+		fi
+
+		# Drop the "Screensaver" item, which is five lines around
+		# xscreensaver-demo.
+		awk '
+			/<item label="Screensaver">/ { skip = 1 }
+			!skip { print }
+			skip && /<\\/item>/ { skip = 0 }
+		' "\$F" >"\$F.new"
+		mv "\$F.new" "\$F"
+
+		if command -v xmllint >/dev/null 2>&1; then
+			xmllint --noout "\$F" ||
+				{ echo "E: \$F is not well-formed after editing" >&2; exit 1; }
+		fi
+	done
+
+	rm -f /etc/skel/.xscreensaver
+	echo "I: screen locking is now \$SCREENSAVER"
+fi
+
+# --- the autostart ---------------------------------------------------------
+for AS in /etc/skel/.config/openbox/autostart /root/.config/openbox/autostart
+do
+	[ -f "\$AS" ] || continue
+
+	if [ "\$COMPOSITOR" = "false" ]; then
+		sed -i 's|^cbpp-compositor --start|#cbpp-compositor --start|' "\$AS"
+	fi
+
+	if [ "\$THUNAR_DAEMON" = "false" ]; then
+		sed -i 's|^thunar --daemon|#thunar --daemon|' "\$AS"
+	fi
+
+	if [ "\$SCREENSAVER" != "xscreensaver" ]; then
+		sed -i 's|^xscreensaver -no-splash|#xscreensaver -no-splash|' "\$AS"
+
+		# X blanks the screen on its own; DPMS powers the backlight down
+		# afterwards. Neither costs a resident process.
+		if ! grep -q "cbpp: screen blanking" "\$AS"; then
+			cat >>"\$AS" <<'BLANK'
+
+## Screen blanking without a daemon (cbpp: screen blanking)
+xset s 600 &
+xset dpms 0 0 900 &
+BLANK
+		fi
+	fi
+
+	echo "I: trimmed \$AS"
+done
+EOF
+else
+	remove_file "$LOWMEM_HOOK"
 fi
 
 # ------------------------------------------------------- display manager --
@@ -1431,6 +1611,22 @@ add_pkg() { GEN_PKGS="${GEN_PKGS}${GEN_PKGS:+
 # The display manager used to be hardcoded in live.list.chroot, which meant
 # changing it took an edit in two places that could disagree.
 add_pkg "$CBPP_DISPLAY_MANAGER"
+
+# VA-API. vainfo comes too: without it there is no way to tell whether hardware
+# decoding is actually working, and on a GPU this old that is the first
+# question anyone asks.
+case $CBPP_HWVIDEO in
+i965)
+	add_pkg i965-va-driver
+	add_pkg vainfo
+	;;
+iHD)
+	add_pkg intel-media-va-driver
+	add_pkg vainfo
+	;;
+esac
+
+[ "$CBPP_SCREENSAVER" = "i3lock" ] && add_pkg i3lock
 
 [ "$CBPP_ZRAM" = "true" ] && add_pkg systemd-zram-generator
 [ "$CBPP_EARLYOOM" = "true" ] && add_pkg earlyoom

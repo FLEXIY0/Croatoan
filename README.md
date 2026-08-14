@@ -16,6 +16,26 @@ changed. What it adds over upstream:
 
 Everything above is a switch in `cbpp.conf`; nothing is forked.
 
+### Old and small machines
+
+There is a block in `cbpp.conf` aimed at a 2 GB laptop with a pre-2010 Intel
+GPU. The interesting part is that the hard problem there is not memory:
+
+- `CBPP_HWVIDEO` installs the VA-API driver, and `CBPP_FIREFOX_VIDEO="h264"`
+  makes YouTube stop serving VP9. No pre-2014 Intel GPU decodes VP9 or AV1, so
+  without this a 720p video is decoded on the CPU and stutters no matter how
+  much memory is free. With it, the GPU does the work.
+- `CBPP_TRIM_INDEXERS` removes `apt-xapian-index` and `plocate`. The former
+  peaks over 300 MB once a week, which on a 2 GB machine is a swap storm for
+  the benefit of one search box.
+- `CBPP_COMPOSITOR="false"`, `CBPP_SCREENSAVER="i3lock"` and
+  `CBPP_THUNAR_DAEMON="false"` take about 75 MB and three wakeup sources out of
+  an idle session.
+- `CBPP_ZRAM_ALGORITHM="lz4"` because zstd manages about 100 MB/s per core on a
+  1.4 GHz Core 2 Duo and a swap fault is on the critical path.
+- `CBPP_MITIGATIONS="off"` is a real security decision and is documented as one
+  where it is set.
+
 The name is not everywhere it could be. `CBPP_BRANDING` reaches `os-release`,
 `/etc/issue`, the welcome script, the root menu, the boot splash, the installer
 banner and the ISO metadata, but not the strings compiled into
