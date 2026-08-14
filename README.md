@@ -1,5 +1,25 @@
-## cbpp
-# #!++, A CrunchBang revival project.
+## croatoan
+# Croatoan, a CrunchBang++ derivative.
+
+Croatoan is #!++ with the idle memory footprint cut down and the branding
+changed. What it adds over upstream:
+
+| | upstream | here |
+| --- | --- | --- |
+| swap | none until you make some | zram, `zstd`, up to 8 GiB, tuned for it |
+| out-of-memory | the kernel OOM killer, eventually | earlyoom |
+| display manager | lxdm, a GTK2 greeter behind its own X server | emptty, one Go binary on a console |
+| input method | ibus and im-config, resident, for a layout label | XKB layouts and a shell indicator |
+| clipboard | parcellite, which trixie no longer has | xfce4-clipman |
+| clock | `ntp`, which trixie no longer has | systemd-timesyncd |
+| banner | none | fastfetch with the sprite |
+
+Everything above is a switch in `cbpp.conf`; nothing is forked.
+
+The name is not everywhere it could be. `CBPP_BRANDING` reaches `os-release`,
+`/etc/issue`, the welcome script, the root menu, the boot splash, the installer
+banner and the ISO metadata, but not the strings compiled into
+debian-installer's own udebs.
 
 In 2015, Philip Newborough -- Corenominal -- had officially discontinued his efforts with the fast and light distro. While Philip believes that the project no longer serves the Linux space in the way he had originally intended, we believe that #! still has great potential and serves the Linux community as the perfect combination of elegance and efficiency.
 

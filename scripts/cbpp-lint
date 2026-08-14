@@ -250,6 +250,95 @@ else
 	ok "fastfetch disabled"
 fi
 
+# -- display manager --------------------------------------------------------
+
+grep -qx "$CBPP_DISPLAY_MANAGER" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+	fail "CBPP_DISPLAY_MANAGER is '$CBPP_DISPLAY_MANAGER' but that package is not in the generated list"
+
+# lxdm used to be pinned in live.list.chroot. Leaving it there while emptty is
+# selected installs both, and whichever grabs a console first wins.
+if grep -qx "lxdm" config/package-lists/live.list.chroot 2>/dev/null &&
+	[ "$CBPP_DISPLAY_MANAGER" != "lxdm" ]; then
+	fail "live.list.chroot still pins lxdm while CBPP_DISPLAY_MANAGER is '$CBPP_DISPLAY_MANAGER'"
+fi
+
+if [ "$CBPP_DISPLAY_MANAGER" = "emptty" ]; then
+	case $CBPP_DM_TTY in
+	tty[1-9] | tty1[0-9])
+		# The unit conflicts with getty@%i, and gettys live on tty1-6.
+		case $CBPP_DM_TTY in
+		tty[1-6]) warn "CBPP_DM_TTY=$CBPP_DM_TTY displaces a getty; tty7 and up are free" ;;
+		esac
+		;;
+	*) fail "CBPP_DM_TTY must be a console name like tty7, got '$CBPP_DM_TTY'" ;;
+	esac
+
+	# Without this component the live session stops at a login prompt, which
+	# is the kind of thing only a boot reveals.
+	_lcomp=config/includes.chroot_after_packages/usr/lib/live/config/0115-emptty
+	if [ -x "$_lcomp" ]; then
+		ok "emptty on $CBPP_DM_TTY, with live-session autologin"
+	else
+		fail "$_lcomp is missing or not executable - the live session would not log in"
+	fi
+fi
+
+# -- terminal ---------------------------------------------------------------
+
+if [ "$CBPP_TERMINAL_STYLE" = "true" ]; then
+	for _c in "$CBPP_TERM_BG" "$CBPP_TERM_FG" "$CBPP_TERM_ACCENT"; do
+		case $_c in
+		"#"[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+		*) fail "terminal colour '$_c' is not a #rrggbb value" ;;
+		esac
+	done
+
+	# terminator reads this as a float; anything outside 0..1 is silently
+	# clamped and the window comes out looking nothing like the setting.
+	case $CBPP_TERM_OPACITY in
+	0 | 1 | 0.[0-9] | 0.[0-9][0-9] | 1.0 | 1.00) ;;
+	*) fail "CBPP_TERM_OPACITY must be between 0 and 1, got '$CBPP_TERM_OPACITY'" ;;
+	esac
+
+	ok "terminal ${CBPP_TERM_FG} on ${CBPP_TERM_BG} at ${CBPP_TERM_OPACITY}, accent ${CBPP_TERM_ACCENT}"
+fi
+
+# -- keyboard ---------------------------------------------------------------
+
+if [ -n "$CBPP_KEYBOARD_LAYOUTS" ]; then
+	case $CBPP_KEYBOARD_LAYOUTS in
+	*[!a-z,]*) fail "CBPP_KEYBOARD_LAYOUTS must be comma-separated XKB names, got '$CBPP_KEYBOARD_LAYOUTS'" ;;
+	esac
+
+	# More than four layouts cannot be told apart: XKB only mirrors groups
+	# 2-4 into the LED mask, which is all the indicator has to read.
+	_nlayouts=$(printf '%s' "$CBPP_KEYBOARD_LAYOUTS" | tr ',' '\n' | grep -c .)
+	[ "$_nlayouts" -le 4 ] ||
+		fail "XKB supports at most 4 groups, CBPP_KEYBOARD_LAYOUTS has $_nlayouts"
+
+	[ -n "$CBPP_KEYBOARD_TOGGLE" ] ||
+		warn "CBPP_KEYBOARD_LAYOUTS is set but CBPP_KEYBOARD_TOGGLE is empty - nothing switches them"
+
+	ok "keyboard layouts $CBPP_KEYBOARD_LAYOUTS via $CBPP_KEYBOARD_TOGGLE"
+fi
+
+# -- branding ---------------------------------------------------------------
+
+if [ -n "$CBPP_BRANDING" ]; then
+	grep -q "hostname=${CBPP_HOSTNAME}\( \|\"\)" config/binary ||
+		fail "config/binary: live hostname does not match CBPP_HOSTNAME='$CBPP_HOSTNAME'"
+
+	# The ISO volume label is a Joliet field: 32 characters, and live-build
+	# expands @ISOVOLUME_TS@ into 15 more than are written here.
+	_vol=$(sed -n 's/^LB_ISO_VOLUME="\(.*\)"/\1/p' config/binary |
+		sed 's/@ISOVOLUME_TS@/20260101-00:00/')
+	if [ "${#_vol}" -le 32 ]; then
+		ok "branding '$CBPP_BRANDING', volume '$_vol' (${#_vol} chars)"
+	else
+		fail "ISO volume expands to ${#_vol} chars, over the 32 limit: $_vol"
+	fi
+fi
+
 # -- suite consistency ------------------------------------------------------
 
 for _f in config/archives/cbpp.list.binary config/archives/cbpp.list.chroot; do

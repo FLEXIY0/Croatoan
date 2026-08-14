@@ -6,5 +6,4 @@ sudo
 apt-transport-https
 psmisc
 cryptsetup
-lxdm
 cbpp-metapackage
