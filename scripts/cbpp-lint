@@ -18,6 +18,15 @@ ok() { echo "ok    $*"; }
 # shellcheck disable=SC1091
 . ./cbpp.conf
 
+if [ -n "${CBPP_PROFILE:-}" ]; then
+	[ -f "profiles/${CBPP_PROFILE}.conf" ] ||
+		fail "CBPP_PROFILE=${CBPP_PROFILE} but profiles/${CBPP_PROFILE}.conf does not exist"
+	# shellcheck disable=SC1090
+	[ -f "profiles/${CBPP_PROFILE}.conf" ] && . "./profiles/${CBPP_PROFILE}.conf"
+fi
+
+ok "profile: ${CBPP_PROFILE:-<none>, general-purpose defaults}"
+
 # -- config/ must match cbpp.conf -------------------------------------------
 
 if scripts/cbpp-apply --check --quiet >/dev/null 2>&1; then
@@ -254,6 +263,13 @@ fi
 
 case $CBPP_HWVIDEO in
 "") ;;
+all)
+	for _d in i965-va-driver intel-media-va-driver mesa-va-drivers; do
+		grep -qx "$_d" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+			fail "CBPP_HWVIDEO is 'all' but $_d is not in the package list"
+	done
+	ok "hardware video: i965, iHD and Mesa together, chosen at runtime by PCI ID"
+	;;
 i965 | iHD)
 	_vadrv=i965-va-driver
 	[ "$CBPP_HWVIDEO" = "iHD" ] && _vadrv=intel-media-va-driver
@@ -398,6 +414,36 @@ sakura | xfce4-terminal)
 	ok "terminal emulator: $CBPP_TERMINAL, replacing terminator"
 	;;
 *) fail "CBPP_TERMINAL must be sakura, xfce4-terminal or terminator, got '$CBPP_TERMINAL'" ;;
+esac
+
+if [ -n "$CBPP_BROWSER" ]; then
+	grep -qx "$CBPP_BROWSER" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_BROWSER is '$CBPP_BROWSER' but that package is not in the list"
+
+	# The panel launcher is rewritten from iceweasel, which has not existed
+	# since 2016, to whatever the browser is - so the name has to be one that
+	# ships a .desktop of the same name.
+	ok "default browser: $CBPP_BROWSER, with firefox-esr kept alongside"
+fi
+
+case $CBPP_NOTIFY in
+xfce4-notifyd) ok "notifications: xfce4-notifyd" ;;
+dunst)
+	grep -qx "dunst" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_NOTIFY is dunst but dunst is not in the package list"
+	ok "notifications: dunst"
+	;;
+*) fail "CBPP_NOTIFY must be xfce4-notifyd or dunst, got '$CBPP_NOTIFY'" ;;
+esac
+
+case $CBPP_JOURNAL in
+persistent) ok "journal on disk" ;;
+volatile)
+	[ -f config/includes.chroot_after_packages/etc/systemd/journald.conf.d/99-cbpp.conf ] ||
+		fail "CBPP_JOURNAL is volatile but the journald drop-in is missing"
+	warn "journal is volatile - logs do not survive a reboot, so a hang cannot be diagnosed afterwards"
+	;;
+*) fail "CBPP_JOURNAL must be persistent or volatile, got '$CBPP_JOURNAL'" ;;
 esac
 
 case $CBPP_TRIM_DAEMONS in

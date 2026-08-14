@@ -11,6 +11,11 @@ on:
         description: "Draft build: squashfs level 3 instead of 19, much faster, larger image"
         type: boolean
         default: false
+      profile:
+        description: "Hardware profile. Empty builds the general image; lowmem builds the 2 GB one."
+        type: choice
+        options: ["", "lowmem"]
+        default: "lowmem"
 
 concurrency:
   group: iso-${{ github.ref }}
@@ -66,6 +71,14 @@ jobs:
         run: |
           sed -i 's/^CBPP_SQUASHFS_LEVEL=.*/CBPP_SQUASHFS_LEVEL="3"/' cbpp.conf
           sed -i 's/^CBPP_ZSYNC=.*/CBPP_ZSYNC="false"/' cbpp.conf
+
+      # Only when run by hand: a push builds whatever profile is committed.
+      - name: Select the hardware profile
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          sed -i 's/^CBPP_PROFILE=.*/CBPP_PROFILE="${{ inputs.profile }}"/' cbpp.conf
+          make apply
+          make lint
 
       - name: Build the builder image
         run: make image

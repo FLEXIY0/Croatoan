@@ -16,10 +16,29 @@ changed. What it adds over upstream:
 
 Everything above is a switch in `cbpp.conf`; nothing is forked.
 
+### Profiles
+
+`cbpp.conf` holds the values that are right on any machine. `CBPP_PROFILE`
+names a file in `profiles/` that is sourced after it and overrides only what
+should differ, so one repository builds a general image and a tuned one without
+either compromising the other:
+
+```
+$ sed -i 's/^CBPP_PROFILE=.*/CBPP_PROFILE=""/' cbpp.conf   # the general image
+$ make apply show
+```
+
+`profiles/lowmem.conf` targets a 2 GB laptop with a pre-2010 Intel GPU - a Dell
+Adamo. Everything in it is wrong on a modern machine, which is exactly why it
+is not in `cbpp.conf`: `mitigations=off`, `lz4` instead of `zstd`, H.264 forced
+over VP9, one Firefox content process, a volatile journal.
+
+The Actions tab can build either without editing anything.
+
 ### Old and small machines
 
-There is a block in `cbpp.conf` aimed at a 2 GB laptop with a pre-2010 Intel
-GPU. The interesting part is that the hard problem there is not memory:
+The interesting part of the low-memory work is that the hard problem there is
+not memory:
 
 - `CBPP_HWVIDEO` installs the VA-API driver, and `CBPP_FIREFOX_VIDEO="h264"`
   makes YouTube stop serving VP9. No pre-2014 Intel GPU decodes VP9 or AV1, so
