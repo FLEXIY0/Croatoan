@@ -844,7 +844,10 @@ if [ "$CBPP_FASTFETCH" = "true" ]; then
         "cpu",
         "memory",
         "swap",
-        "disk",
+        {
+            "type": "disk",
+            "folders": "/"
+        },
         "break",
         "colors"
     ]
