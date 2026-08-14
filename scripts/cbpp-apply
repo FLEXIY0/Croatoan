@@ -961,6 +961,12 @@ else
 	remove_file "$JOURNAL_DROPIN"
 fi
 
+# Panel launchers, as program names rather than file names - the hook resolves
+# each against what is on disk. Terminal and browser follow their own keys, so
+# changing either moves the panel with it.
+_launchers="${CBPP_TERMINAL} thunar geany"
+[ -n "$CBPP_BROWSER" ] && _launchers="${_launchers} ${CBPP_BROWSER}"
+
 # The browser, the notification daemon, and the panel launchers - which is one
 # hook because all three end up editing the same two files.
 write_file "$DESKTOP_HOOK" 755 <<EOF
@@ -1015,31 +1021,65 @@ fi
 
 # --- panel launchers -------------------------------------------------------
 #
-# tint2 silently draws nothing for a launcher whose .desktop is missing, so a
-# stale name is invisible until you notice the gap. iceweasel has not existed
-# in Debian since 2016 and gedit is not in this image at all, so two of the
-# four shipped launchers were already dead.
+# tint2 draws nothing at all for a launcher whose .desktop is missing, so a
+# stale name leaves a silent gap. Three of the four shipped ones pointed
+# nowhere: iceweasel has not existed in Debian since 2016, gedit is not in this
+# image, and xfce4-file-manager.desktop is not what Thunar installs.
+#
+# So the list is kept as program names and each is resolved against what is
+# actually on disk - including the reverse-DNS form KDE now uses, which is why
+# Falkon ships org.kde.falkon.desktop and not falkon.desktop. Guessing that
+# name would have left the browser missing from the panel.
+LAUNCHERS="${_launchers}"
+
+find_desktop() {
+	for _cand in "/usr/share/applications/\$1.desktop" \\
+		"/usr/share/applications/"*".\$1.desktop"
+	do
+		if [ -e "\$_cand" ]; then
+			printf '%s' "\$_cand"
+			return 0
+		fi
+	done
+	return 1
+}
+
+RESOLVED=""
+for APP in \$LAUNCHERS; do
+	if D=\$(find_desktop "\$APP"); then
+		RESOLVED="\$RESOLVED\$D
+"
+	else
+		echo "W: no .desktop file for '\$APP', leaving it out of the panel" >&2
+	fi
+done
+
+[ -n "\$RESOLVED" ] ||
+	{ echo "E: not one panel launcher could be resolved" >&2; exit 1; }
+
 for TINT in /etc/skel/.config/tint2/tint2rc /root/.config/tint2/tint2rc
 do
 	[ -f "\$TINT" ] || continue
 
-	if [ -n "\$BROWSER" ]; then
-		sed -i "s|applications/iceweasel.desktop|applications/\$BROWSER.desktop|" "\$TINT"
-	fi
+	# Replace the whole block in place, so this is the same whether it runs
+	# once or twice and whatever state the file was left in.
+	printf '%s' "\$RESOLVED" >/tmp/cbpp-launchers
+	awk '
+		/^launcher_item_app = / {
+			if (!done) {
+				while ((getline line < "/tmp/cbpp-launchers") > 0)
+					print "launcher_item_app = " line
+				done = 1
+			}
+			next
+		}
+		{ print }
+	' "\$TINT" >"\$TINT.new"
+	mv "\$TINT.new" "\$TINT"
+	rm -f /tmp/cbpp-launchers
 
-	MISSING=0
-	while read -r LINE; do
-		DESKTOP=\${LINE#launcher_item_app = }
-		[ -e "\$DESKTOP" ] && continue
-
-		echo "W: panel launcher \$DESKTOP does not exist, dropping it" >&2
-		sed -i "\\\\|^launcher_item_app = \$DESKTOP\$|d" "\$TINT"
-		MISSING=\$((MISSING + 1))
-	done <<LAUNCHERS
-\$(grep "^launcher_item_app = " "\$TINT" || true)
-LAUNCHERS
-
-	echo "I: \$TINT: \$(grep -c "^launcher_item_app = " "\$TINT") launchers, \$MISSING dropped"
+	echo "I: \$TINT: \$(grep -c '^launcher_item_app = ' "\$TINT") launchers"
+	grep '^launcher_item_app = ' "\$TINT" | sed 's|^|I:   |'
 done
 EOF
 
