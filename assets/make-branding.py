@@ -7,18 +7,30 @@ banner across the top of the installer. Rather than redraw the name in some
 approximation of the artwork's typeface, this crops the wordmark straight out
 of the wallpaper, so all three agree by construction.
 
-Run by hand after changing the wallpaper; the results are committed, because
-the build must not need Pillow:
+The boot splash is not a PNG. live-build renders config/bootloaders/*/splash.svg
+at build time - 640x480 for syslinux, 800x600 for grub - and only skips that
+when a splash.png is already sitting next to it. Since the BIOS bootloader here
+is syslinux and there was no isolinux/splash.png, replacing a PNG under
+grub-pc/ fixed the EFI boot menu and left the BIOS one showing #!++. So the
+wordmark goes into the SVG itself, where it reaches every bootloader at once,
+and the PNGs stay out of the way.
+
+Run by hand after changing the wallpaper or the version; the results are
+committed, because the build must not need Pillow:
 
     python3 assets/make-branding.py
 """
+import base64
+import io
+import pathlib
+import re
 import sys
 
 from PIL import Image
 
 SRC = "config/includes.chroot_after_packages/usr/share/backgrounds/croatoan-wallpaper.png"
-SPLASH = "config/bootloaders/grub-pc/splash.png"
 BANNER = "config/includes.installer/usr/share/graphics/logo_debian.png"
+SPLASHES = sorted(pathlib.Path("config/bootloaders").glob("*/splash.svg"))
 
 # Backdrop of the installer banner. Black rather than the charcoal it replaces,
 # because the artwork's own background is black and any other colour turns the
@@ -52,13 +64,7 @@ def main():
     mark, box = wordmark(src)
     print(f"wordmark: {box} -> {mark.size}")
 
-    # Boot splash. The grub theme starts its menu at 52% of the height and the
-    # help bar sits 50px off the bottom, so the artwork gets the top half.
-    out = Image.new("RGBA", (640, 386), (0, 0, 0, 255))
-    art = fit(mark, 560, 150)
-    out.paste(art.convert("RGBA"), ((640 - art.width) // 2, (193 - art.height) // 2))
-    out.save(SPLASH)
-    print(f"wrote {SPLASH} {out.size}, artwork {art.size}")
+    splash(mark)
 
     # Installer banner: wordmark left, release right, on the same charcoal the
     # installer's gtkrc uses for its header.
@@ -70,6 +76,53 @@ def main():
     out.paste(version, (800 - 24 - version.width, (75 - version.height) // 2), version)
     out.save(BANNER)
     print(f"wrote {BANNER} {out.size}, artwork {art.size}")
+
+
+def splash(mark):
+    """Put the wordmark into every bootloader's splash.svg.
+
+    The old logo is a single <image> element carrying a base64 PNG, so this
+    swaps the payload rather than touching the drawing. Two other changes go
+    with it: the backdrop goes from #333333 to black, because the artwork's own
+    background is black and anything else turns the crop into a visible
+    rectangle, and the product line stops naming the old project.
+    """
+    art = fit(mark, 646, 190)
+    buf = io.BytesIO()
+    art.save(buf, format="PNG", optimize=True)
+    payload = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    version = read_version()
+
+    for path in SPLASHES:
+        t = path.read_text()
+
+        t, n = re.subn(
+            r'(xlink:href="data:image/png;base64,)[^"]*(")',
+            lambda m: m.group(1) + payload + m.group(2),
+            t,
+        )
+        if n != 1:
+            sys.exit(f"make-branding: {path}: expected one embedded image, found {n}")
+
+        # The slot the old logo filled is 323x195, a different shape to the
+        # wordmark; without this the artwork is stretched to fit it.
+        t = t.replace('preserveAspectRatio="none"', 'preserveAspectRatio="xMinYMid meet"')
+
+        t = t.replace(
+            ">CrunchBang Plus Plus<", f">Croatoan {version}<"
+        ).replace(
+            ">Version: 13 @ARCHITECTURE@<", f">Version: {version} @ARCHITECTURE@<"
+        )
+
+        t = t.replace('style="fill:#333333;fill-opacity:1;stroke:none"',
+                      'style="fill:#000000;fill-opacity:1;stroke:none"')
+
+        if "CrunchBang" in t:
+            sys.exit(f"make-branding: {path}: the old name survived the rewrite")
+
+        path.write_text(t)
+        print(f"wrote {path}")
 
 
 def version_text():

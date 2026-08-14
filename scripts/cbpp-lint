@@ -328,6 +328,25 @@ if [ -n "$CBPP_BRANDING" ]; then
 	grep -q "hostname=${CBPP_HOSTNAME}\( \|\"\)" config/binary ||
 		fail "config/binary: live hostname does not match CBPP_HOSTNAME='$CBPP_HOSTNAME'"
 
+	# The boot splash is rendered from splash.svg at build time, per
+	# bootloader - so a name left in one of them is the first thing a user
+	# sees, and it is invisible in any diff of the PNGs.
+	for _svg in config/bootloaders/*/splash.svg; do
+		[ -e "$_svg" ] || continue
+		grep -q "CrunchBang" "$_svg" &&
+			fail "$_svg still says CrunchBang - re-run assets/make-branding.py"
+
+		# A splash.png beside a splash.svg wins silently: live-build skips
+		# rsvg-convert when one is already there. That is exactly how the
+		# BIOS boot menu kept the old logo while the EFI one changed.
+		if [ -e "${_svg%.svg}.png" ]; then
+			fail "${_svg%.svg}.png shadows $_svg - live-build will not render the SVG"
+		fi
+	done
+	grep -q "^title-text: \"${CBPP_BRANDING}" \
+		config/bootloaders/grub-pc/live-theme/theme.txt 2>/dev/null ||
+		warn "config/bootloaders/grub-pc/live-theme/theme.txt: grub menu title is not branded"
+
 	# The ISO volume label is a Joliet field: 32 characters, and live-build
 	# expands @ISOVOLUME_TS@ into 15 more than are written here.
 	_vol=$(sed -n 's/^LB_ISO_VOLUME="\(.*\)"/\1/p' config/binary |

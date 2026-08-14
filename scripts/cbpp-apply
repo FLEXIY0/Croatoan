@@ -1348,6 +1348,18 @@ fi
 
 BRAND_HOOK=config/hooks/normal/0992-branding.hook.chroot
 
+# The grub menu's own title line. live-build only rewrites this when it falls
+# back to its stock splash, which it does not here, so whatever is on disk is
+# what boots.
+BRAND_THEME=config/bootloaders/grub-pc/live-theme/theme.txt
+if [ -n "$CBPP_BRANDING" ] && [ -f "$BRAND_THEME" ]; then
+	awk -v t="${BRAND} ${CBPP_VERSION}" '
+		index($0, "title-text:") == 1 { print "title-text: \"" t "\""; next }
+		{ print }
+	' "$BRAND_THEME" >"$BRAND_THEME.cbpp-tmp"
+	commit_tmp "$BRAND_THEME" "title-text: ${BRAND} ${CBPP_VERSION}"
+fi
+
 if [ -n "$CBPP_BRANDING" ]; then
 	write_file "$BRAND_HOOK" 755 <<EOF
 #!/bin/sh
