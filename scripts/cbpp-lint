@@ -264,6 +264,25 @@ i965 | iHD)
 *) fail "CBPP_HWVIDEO must be empty, i965 or iHD, got '$CBPP_HWVIDEO'" ;;
 esac
 
+if [ "$CBPP_ICON_CACHE" = "true" ]; then
+	grep -qx "libgtk-3-bin" config/package-lists/cbpp-generated.list.chroot 2>/dev/null ||
+		fail "CBPP_ICON_CACHE is on but libgtk-3-bin, which provides gtk-update-icon-cache, is not in the package list"
+
+	# live-build's stock hook deletes exactly what ours builds, and it runs
+	# first. Having both is worse than having neither: the build spends the
+	# time and the image still ships no cache.
+	#
+	# -L as well as -e, because these hooks are symlinks into live-build's own
+	# directory and so dangle outside the build container - which is exactly
+	# the state this has to catch.
+	_stock=config/hooks/normal/9000-remove-gnome-icon-cache.hook.chroot
+	if [ -e "$_stock" ] || [ -L "$_stock" ]; then
+		fail "9000-remove-gnome-icon-cache is still linked in and will delete the caches 9030 builds"
+	fi
+
+	ok "icon and font caches built into the image"
+fi
+
 case $CBPP_SCREENSAVER in
 xscreensaver | none) ok "screen locking: $CBPP_SCREENSAVER" ;;
 i3lock)
